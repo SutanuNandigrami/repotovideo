@@ -1,171 +1,219 @@
-# 🎬 RepoToViralVideo
+# RepoToViralVideo
 
-> Turn any GitHub repository into a viral promo video in just one-click.
+> Turn any GitHub repository or local file into a viral promo video in just one-click.
 
-**RepoToViralVideo** analyzes any GitHub repository and generates a short, high-energy promo video designed to go viral on X/LinkedIn with AI voiceover, kinetic typography, animated stats, and background music.
+**RepoToViralVideo** analyzes any GitHub repository or local file and generates a short, high-energy promo video designed to go viral on X/LinkedIn with AI voiceover, kinetic typography, animated stats, and background music.
 
 <p align="left">
   <img src="app_demo.png" width="100%" alt="RepoToViralVideo">
 </p>
 
-> ⚡ **Powered by Gemini 3.1 Pro (`gemini-3.1-pro-preview`)** — Google's latest model for deep repo analysis, feature extraction, and engaging script generation.
-
-No video editing skills needed. Just point it at a repo and get a ready-to-share video.
+> Powered by **Gemini 2.5 Flash** for analysis and TTS
 
 ---
 
-## ✨ Features
+## Features
 
-- 🔥 **Kinetic Typography:** Words slam in from all directions with spring physics
-- 📊 **Animated Counters:** Star counts and fork counts animate from 0 to their final number
-- 🎤 **AI Voiceover:** Gemini TTS generates natural, conversational narration for each scene
-- 🎵 **Background Music:** 4 bundled royalty-free tracks (chill, upbeat, tech, hype) or use your own
-- ⚡ **Fast Cuts:** Slide transitions between scenes, nothing stays static
-- 🧠 **Smart Analysis:** Gemini 3.1 Pro reads the repo page directly and extracts impressive stats, features, and selling points
-- 🎯 **Adaptive Scenes:** Automatically selects different video styles based on repo maturity (4–6 scenes)
-- 🖥️ **Web UI:** Modern frontend to generate videos right from your browser
-
----
-
-## 🎥 Demo
-
-Here's a viral video generated for [awesome-llm-apps](https://github.com/Shubhamsaboo/awesome-llm-apps) (95K+ ⭐):
-
-[![Awesome LLM Apps](https://img.youtube.com/vi/C6mMseavn8Q/maxresdefault.jpg)](https://youtu.be/C6mMseavn8Q)
+- **Multiple Input Sources:** GitHub URLs, local files (.md, .txt, .pdf)
+- **AI Voiceover:** Gemini TTS generates natural, conversational narration
+- **Kinetic Typography:** Words slam in from all directions with spring physics
+- **Animated Counters:** Star counts and fork counts animate from 0 to their final number
+- **Background Music:** 4 bundled royalty-free tracks (chill, upbeat, tech, hype)
+- **Fast Cuts:** Slide transitions between scenes, nothing stays static
+- **Smart Analysis:** Gemini reads the repo/file and extracts impressive stats and features
+- **Adaptive Scenes:** Automatically selects different video styles based on content (4-6 scenes)
+- **Checkpoint & Resume:** Failed runs can be resumed from where they left off
 
 ---
 
-## 🚀 Getting Started
+## Installation
 
 ### Prerequisites
 
 - **Python 3.10+**
 - **Node.js 18+**
-- **FFmpeg:** `brew install ffmpeg` on macOS or `apt install ffmpeg` on Ubuntu
-- **Gemini API key:** Get your API from [Vertex AI Studio](https://vertexai.google.com) or [Google AI Studio](https://aistudio.google.com). 
+- **FFmpeg:** Required for audio processing
+- **Gemini API key:** Get from [Google AI Studio](https://aistudio.google.com)
 
-### Installation
+### Setup
 
 ```bash
 # 1. Clone the repo
 git clone https://github.com/Shubhamsaboo/repotovideo.git
 cd repotovideo
 
-# 2. Install all dependencies (Python + Node)
+# 2. Install dependencies
 npm run install:all
 
-# 3. Set your Gemini API key
-export GEMINI_API_KEY="your-key-here"
+# 3. Set your Gemini API key (choose one)
+export GEMINI_API_KEY="your-key-here"    # Linux/Mac
+set GEMINI_API_KEY=your-key-here          # Windows
 ```
 
-This installs Python dependencies, the video renderer, and the web frontend in one command.
+---
 
-### Generate a Video (CLI)
+## Usage
 
-```bash
-python generate.py https://github.com/user/cool-repo
-```
-
-This will analyze the repo, generate a voiceover, and render a 1080p video to `apps/video/out/viral-<repo-name>.mp4`.
-
-You can customize the output with flags:
+### CLI Commands
 
 ```bash
+# Generate from GitHub repo
+python generate.py https://github.com/langchain-ai/langchain
+
+# Generate from local file
+python generate.py ./README.md
+python generate.py ./document.pdf
+
+# With custom options
 python generate.py https://github.com/user/repo --music hype --voice Puck
 ```
 
-**Music moods:** `tech` (default), `hype`, `chill`, `upbeat`
-**Voices:** `Puck` (default, energetic), `Kore` (confident), `Aoede` (warm), `Charon` (deep)
+### Command Options
 
-### Run the Web UI
+| Option | Description | Default |
+|--------|-------------|---------|
+| `source` | GitHub URL or local file path | Required |
+| `--content-type` | Video format: instagram_reel, youtube_reel, youtube_long | youtube_reel |
+| `--music` | Background music: chill, upbeat, tech, hype | tech |
+| `--voice` | TTS voice: Puck, Kore, Aoede, Charon, Fenrir | Puck |
+| `--api` | API provider: gemini, vertex | gemini |
+| `--music-volume` | Background music volume (0.0-1.0) | 0.22 |
+| `--output` | Output filename | viral-<source>.mp4 |
+| `--skip-render` | Generate composition only, skip rendering | false |
+| `--resume` | Resume from last checkpoint | false |
+| `--clean` | Start fresh, ignore checkpoints | false |
+| `--list-content-types` | List available content types | - |
+| `--list-apis` | List available API providers | - |
 
-```bash
-# Terminal 1 — Start the API server (from project root)
-cd apps/api
-python3 server.py
-
-# Terminal 2 — Start the web frontend (from project root)
-npm run dev:web
-```
-
-Open [http://localhost:3000](http://localhost:3000), enter your Gemini API key and a GitHub URL, pick your music and voice, and hit Generate. The API runs on port 8000 and the frontend on port 3000.
-
----
-
-## 🏗️ How It Works
-
-The pipeline runs in **3 steps**:
-
-1. **AI Analysis & Script:** Gemini 3.1 Pro reads the repo page directly (via URL context), extracts stars, forks, features, and tech stack, then writes a punchy Fireship-style voiceover script with scene selection
-2. **Generate Voiceover:** Gemini 2.5 Pro TTS creates natural narration with per-scene tone guidance ("say this with building excitement")
-3. **Render Video:** Remotion renders dynamic React components into a 1080p MP4 with spring animations, transitions, and background music
-
-The AI adapts the video based on repo maturity:
-
-| Repo Size | Stars | Scenes | Hook Style |
-|-----------|-------|--------|------------|
-| 🚀 Viral | 10K+ | 6 | Animated star counter |
-| 📈 Growing | 100–10K | 5 | Momentum ("X K+ and climbing") |
-| 💡 New | <100 | 4 | Problem-focused |
-
----
-
-## 🎤 Voice Options
-
-All voices use Gemini 2.5 Pro TTS with conversational tone prompting:
+### Voice Options
 
 | Voice | Style |
 |-------|-------|
-| **Puck** ⭐ | Playful, energetic: great for hype videos |
+| **Puck** | Playful, energetic - great for hype videos |
 | **Kore** | Warm, confident |
 | **Aoede** | Smooth, warm |
 | **Charon** | Deep, authoritative |
+| **Fenrir** | Bold, strong |
+
+### Music Options
+
+| Music | Mood |
+|-------|------|
+| **tech** | Futuristic, modern (default) |
+| **hype** | Energetic, exciting |
+| **chill** | Relaxed, calm |
+| **upbeat** | Positive, motivating |
 
 ---
 
-## 📁 Project Structure
+## Pipeline
+
+The video generation runs in **4 steps**:
+
+1. **AI Analysis** - Gemini analyzes the source (repo URL or file content) and extracts:
+   - Stars, forks, language, topics
+   - Key features and selling points
+   - Tech stack information
+   - Generates scene selection and voiceover scripts
+
+2. **TTS Voiceover** - Gemini TTS generates narration for each scene:
+   - 6 scenes: hook, what, features, tech, stats, cta
+   - Each scene gets custom tone hints for natural delivery
+
+3. **Composition** - Generates Remotion React components:
+   - Dynamic TutorialVideo.tsx with scene data
+   - Root.tsx with composition settings
+
+4. **Render** - Remotion renders the final video:
+   - 1080x1920 (9:16) for social media
+   - Spring animations, transitions, background music
+
+---
+
+## Checkpoint & Resume
+
+The pipeline saves progress after each step. If something fails, you can resume:
+
+```bash
+# Resume from last checkpoint
+python generate.py https://github.com/user/repo --resume
+
+# Start completely fresh (ignore checkpoints)
+python generate.py https://github.com/user/repo --clean
+```
+
+**What gets saved:**
+- Analysis data (analysis.json)
+- Voiceover audio (audio/scene_*.mp3)
+- Scene durations (durations.json)
+- Generated composition (TutorialVideo.tsx, Root.tsx)
+
+---
+
+## Output
+
+Generated videos are saved to:
+
+```
+apps/video/out/viral-<source>.mp4
+```
+
+Example:
+```
+apps/video/out/viral-langchain.mp4
+```
+
+---
+
+## Project Structure
 
 ```
 repotovideo/
-├── generate.py                  # CLI entry point
-├── apps/
-│   ├── api/                     # Python FastAPI backend
-│   │   ├── server.py               # API server (port 8000)
-│   │   ├── requirements.txt
-│   │   └── pipeline/
-│   │       ├── viral_analyzer.py    # Gemini 3.1 Pro repo analysis + URL context
-│   │       ├── viral_tts.py         # Gemini 2.5 Pro TTS voiceover
-│   │       └── viral_renderer.py    # Dynamic Remotion composition generator
-│   ├── video/                   # Remotion video renderer
-│   │   ├── src/
-│   │   │   ├── TutorialVideo.tsx    # Main composition (auto-generated)
-│   │   │   ├── Root.tsx             # Remotion root (auto-generated)
-│   │   │   ├── types.ts             # RepoData interface
-│   │   │   └── scenes/              # Scene components
-│   │   │       ├── HookScene.tsx    # Star counter / momentum / problem hook
-│   │   │       ├── WhatScene.tsx    # Kinetic title animation
-│   │   │       ├── FeaturesScene.tsx
-│   │   │       ├── TechScene.tsx
-│   │   │       ├── StatsScene.tsx
-│   │   │       └── CTAScene.tsx
-│   │   └── public/music/           # Bundled royalty-free tracks
-│   └── web/                     # Next.js frontend
-│       ├── src/app/page.tsx         # Landing page + generate UI
-│       └── public/assets/           # Visual assets + demo video
+|
+|-- generate.py                  # CLI entry point
+|
+|-- apps/
+|   |-- api/                     # Python pipeline
+|   |   |-- server.py            # API server (optional)
+|   |   |-- requirements.txt
+|   |   |-- pipeline/
+|   |   |   |-- viral_analyzer.py    # AI analysis
+|   |   |   |-- viral_tts.py         # Voice generation
+|   |   |   |-- viral_renderer.py    # Composition generator
+|   |   |   |-- checkpoint.py        # Checkpoint system
+|   |   |   |-- source_validator.py  # URL/file validation
+|   |   |   |-- api_client.py        # API client
+|   |
+|   |-- video/                   # Remotion video project
+|       |-- src/
+|       |   |-- TutorialVideo.tsx    # Main composition
+|       |   |-- Root.tsx             # Remotion root
+|       |   |-- types.ts
+|       |   |-- scenes/              # Scene components
+|       |       |-- HookScene.tsx
+|       |       |-- WhatScene.tsx
+|       |       |-- FeaturesScene.tsx
+|       |       |-- TechScene.tsx
+|       |       |-- StatsScene.tsx
+|       |       |-- CTAScene.tsx
+|       |-- public/
+|           |-- music/               # Background tracks
+|           |-- audio/               # TTS audio (generated)
+|
+|-- ffmpeg-8.0.1-essentials_build/  # Bundled FFmpeg (Windows)
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-- **AI:** Gemini 3.1 Pro (analysis) + Gemini 2.5 Pro TTS (voiceover)
-- **Video:** [Remotion](https://remotion.dev) (React → MP4)
-- **Backend:** FastAPI (Python)
-- **Frontend:** Next.js + Framer Motion
-- **Audio:** FFmpeg (WAV → MP3 conversion)
+- **AI:** Gemini 2.5 Flash (analysis + TTS)
+- **Video:** [Remotion](https://remotion.dev) (React -> MP4)
+- **Backend:** Python 3.10+
+- **Audio:** FFmpeg
 
 ---
 
-## 📄 License
+## License
 
-MIT - fork it, customize it, make it yours.
+MIT
