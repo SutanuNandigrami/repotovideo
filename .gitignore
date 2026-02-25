@@ -22,6 +22,10 @@ apps/video/public/audio_viral/
 .env.local
 .env.production
 
+# FFmpeg (download and install manually)
+ffmpeg*.zip
+ffmpeg-*/
+
 # Output directory for generated videos
 output/
 
