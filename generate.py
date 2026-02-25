@@ -263,7 +263,7 @@ def run_pipeline_step_composition(
     
     music_track = MUSIC_MAP.get(music, "music/tech.mp3")
     
-    # Get audio directory relative to output
+    # Get audio directory - use absolute path for copying
     output_dir = Path(checkpoint_mgr.output_dir)
     audio_dir = str(output_dir / "audio")
     
@@ -394,9 +394,15 @@ async def run_pipeline(
             )
         
         # Step 3: Composition
-        if checkpoint_mgr.has_step_completed(PipelineStep.GENERATE_SCENES):
+        # Check if files exist before skipping
+        src_dir = Path(VIDEO_DIR / "src")
+        composition_files_exist = (src_dir / "Root.tsx").exists() and (src_dir / "TutorialVideo.tsx").exists()
+        
+        if checkpoint_mgr.has_step_completed(PipelineStep.GENERATE_SCENES) and composition_files_exist:
             print("\n[SKIP] Step 3/4 -- Composition (already completed)")
         else:
+            # Always regenerate composition files to ensure they're up to date
+            print("\n[GEN] Step 3/4 -- Generating composition...")
             run_pipeline_step_composition(
                 checkpoint_mgr, analysis, durations, music, music_volume
             )

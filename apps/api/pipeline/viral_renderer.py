@@ -89,12 +89,34 @@ def generate_composition(
     height = content_spec.get("height", 1080)
     aspect_ratio = content_spec.get("aspect_ratio", "16:9")
     
-    # Build SCENES array
+    # Copy audio files to public directory for Remotion
+    public_audio_dir = VIDEO_DIR / "public" / "audio"
+    public_audio_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get absolute path to source audio files
+    source_audio_dir = Path(audio_dir)
+    
+    if source_audio_dir.exists():
+        # Copy each audio file
+        for audio_file in source_audio_dir.glob("*.mp3"):
+            dest_file = public_audio_dir / audio_file.name
+            # Only copy if source is newer or dest doesn't exist
+            if not dest_file.exists() or dest_file.stat().st_mtime < audio_file.stat().st_mtime:
+                import shutil
+                shutil.copy2(audio_file, dest_file)
+                print(f"   [COPY] {audio_file.name} -> public/audio/")
+    else:
+        print(f"   [!] Audio source not found: {source_audio_dir}")
+    
+    # Update audio_dir to use public folder
+    audio_dir_for_template = "audio"
+    
+    # Build SCENES array with paths relative to public/audio
     scene_entries = []
     for i, scene_id in enumerate(scenes):
         dur = durations.get(scene_id, 5.0)
         scene_entries.append(
-            f'  {{ id: "{scene_id}", dur: Math.ceil({dur:.3f} * FPS), audio: "{audio_dir}/scene_{i:02d}.mp3" }}'
+            f'  {{ id: "{scene_id}", dur: Math.ceil({dur:.3f} * FPS), audio: "{audio_dir_for_template}/scene_{i:02d}.mp3" }}'
         )
     scenes_array = ",\n".join(scene_entries)
     
@@ -159,9 +181,9 @@ def generate_composition(
           alignItems: "center",
           justifyContent: "center"
         }}"""
-        container_style = "{ width: 1080, height: 1920 }"
+        container_style = "{{ width: 1080, height: 1920 }}"
     else:
-        container_style = "{ width: 1920, height: 1080 }"
+        container_style = "{{ width: 1920, height: 1080 }}"
     
     tutorial_tsx = f"""import {{ Audio, staticFile }} from "remotion";
 import {{ TransitionSeries, linearTiming }} from "@remotion/transitions";
@@ -229,8 +251,8 @@ export const RemotionRoot = () => {{
     
     # Write files
     src_dir = VIDEO_DIR / "src"
-    (src_dir / "TutorialVideo.tsx").write_text(tutorial_tsx)
-    (src_dir / "Root.tsx").write_text(root_tsx)
+    (src_dir / "TutorialVideo.tsx").write_text(tutorial_tsx, encoding="utf-8")
+    (src_dir / "Root.tsx").write_text(root_tsx, encoding="utf-8")
     
     print(f"   Generated composition: {len(scenes)} scenes, {total_dur:.1f}s")
     print(f"     Resolution: {width}x{height} ({aspect_ratio})")
@@ -266,17 +288,29 @@ def render_video(
     
     output_path = str(VIDEO_DIR / "out" / output_name)
     
-    # Use local npx from node_modules on Windows
+    # Use local remotion from node_modules on Windows
     import platform
     if platform.system() == "Windows":
-        npx_cmd = str(VIDEO_DIR / "node_modules" / ".bin" / "npx.cmd")
+        # Check for local remotion.cmd
+        remotion_cmd = VIDEO_DIR / "node_modules" / ".bin" / "remotion.cmd"
+        if remotion_cmd.exists():
+            render_cmd = str(remotion_cmd)
+        else:
+            # Fall back to npx
+            render_cmd = "npx"
     else:
-        npx_cmd = "npx"
+        render_cmd = "npx"
     
     print(f"  [VIDEO] Rendering video...")
+    
+    # Build the command - if using npx, need 'remotion render', if using remotion.cmd, just 'render'
+    if "npx" in render_cmd:
+        cmd = [render_cmd, "remotion", "render", composition_id, output_path, f"--concurrency={concurrency}"]
+    else:
+        cmd = [render_cmd, "render", composition_id, output_path, f"--concurrency={concurrency}"]
+    
     subprocess.run(
-        [npx_cmd, "remotion", "render", composition_id, output_path,
-         f"--concurrency={concurrency}"],
+        cmd,
         cwd=str(VIDEO_DIR),
         check=True,
     )

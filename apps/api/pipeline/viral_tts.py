@@ -17,7 +17,7 @@ from google.genai import types
 from .api_client import create_api_client, APIProvider
 
 
-TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.0-flash-exp")
+TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.5-flash-preview-tts")
 VOICE = "Puck"  # Natural, playful, energetic
 
 TONE_HINTS = {

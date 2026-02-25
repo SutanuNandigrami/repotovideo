@@ -24,8 +24,8 @@ from typing import Any, Optional
 class PipelineStep(Enum):
     """Pipeline steps in execution order."""
     ANALYZE = "analyze"
-    GENERATE_SCENES = "generate_scenes"
     TTS = "tts"
+    GENERATE_SCENES = "generate_scenes"
     RENDER_VIDEO = "render_video"
     
     @classmethod
@@ -284,22 +284,53 @@ class CheckpointManager:
         return files
     
     def has_step_completed(self, step: PipelineStep) -> bool:
-        """Check if a step has already completed successfully."""
+        """Check if a step has already completed (successfully or not).
+        
+        A step is considered completed if:
+        1. We're past this step in the pipeline (regardless of status), OR
+        2. We're at this step and status is completed, OR
+        3. We're at this step with failed status but outputs exist (step actually succeeded but later step failed)
+        """
         checkpoint = self.load_checkpoint()
         if not checkpoint:
             return False
         
-        # Check if this specific step is marked as completed
-        if checkpoint.step == step.value and checkpoint.status == "completed":
+        step_order = PipelineStep.list_values()
+        
+        # Get indices
+        try:
+            checkpoint_idx = step_order.index(checkpoint.step)
+        except ValueError:
+            # Invalid step in checkpoint
+            return False
+        
+        try:
+            target_idx = step_order.index(step.value)
+        except ValueError:
+            # Invalid step
+            return False
+        
+        # If checkpoint shows we're past this step, it's considered completed
+        if checkpoint_idx > target_idx:
             return True
         
-        # Also check if we're past this step and it was successful
-        step_order = PipelineStep.list_values()
-        current_idx = step_order.index(checkpoint.step)
-        target_idx = step_order.index(step.value)
+        # If checkpoint is at this step and status is completed, it's done
+        if checkpoint_idx == target_idx and checkpoint.status == "completed":
+            return True
         
-        # Step completed if we're past it and it was successful
-        return current_idx > target_idx and checkpoint.status == "completed"
+        # If checkpoint is at this step with failed status, check if outputs exist
+        # This handles the case where this step succeeded but a later step failed
+        if checkpoint_idx == target_idx and checkpoint.status == "failed":
+            if step == PipelineStep.ANALYZE and checkpoint.analysis:
+                return True
+            if step == PipelineStep.TTS and checkpoint.audio_files:
+                return True
+            if step == PipelineStep.GENERATE_SCENES and checkpoint.scenes:
+                return True
+            if step == PipelineStep.RENDER_VIDEO and checkpoint.video_output:
+                return True
+        
+        return False
     
     def get_step_data(self, step: PipelineStep) -> Optional[dict]:
         """Get saved data from a completed step."""
