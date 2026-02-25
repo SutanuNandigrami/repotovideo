@@ -1,19 +1,24 @@
 """
-🎤 Viral Video TTS — Gemini 2.5 Pro Preview TTS
+🎤 Viral Video TTS — Gemini 2.5 Pro Preview TTS + Vertex AI Support
 
 Generates voiceover audio for each scene using Gemini's natural TTS.
+Supports both Gemini API and Vertex AI API.
 """
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 from google import genai
 from google.genai import types
 
+from .api_client import create_api_client, APIProvider
 
+
+TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.0-flash-exp")
 VOICE = "Puck"  # Natural, playful, energetic
-MODEL = "gemini-2.5-pro-preview-tts"
 
 TONE_HINTS = {
     "hook": "Say this with excitement and energy, like revealing something amazing. Grab attention immediately:",
@@ -29,12 +34,22 @@ def generate_voiceover(
     voiceover_scripts: dict[str, str],
     output_dir: str,
     voice: str = VOICE,
+    api_provider: str = "gemini",
 ) -> dict[str, float]:
     """Generate TTS audio for each scene.
     
-    Returns: dict of scene_id -> duration in seconds
+    Args:
+        voiceover_scripts: Dict of scene_id -> script text
+        output_dir: Output directory        voice: Voice for audio files
+ name (Puck, Kore, Aoede, Charon, Fenrir)
+        api_provider: API provider ("gemini" or "vertex")
+    
+    Returns:
+        dict of scene_id -> duration in seconds
     """
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    # Create API client
+    client = create_api_client(provider=api_provider)
+    
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     
@@ -43,7 +58,11 @@ def generate_voiceover(
     
     for scene_id, script in voiceover_scripts.items():
         fname = f"scene_{scene_index:02d}.mp3"
-        raw_path = f"/tmp/viral_tts_{scene_id}_raw.wav"
+        
+        # Use platform-aware temp directory
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            raw_path = tmp.name
+        
         mp3_path = str(out / fname)
         
         tone = TONE_HINTS.get(scene_id, "Say this naturally and engagingly:")
@@ -52,8 +71,9 @@ def generate_voiceover(
         print(f"  🎤 Generating {scene_id} ({fname})...")
         
         try:
-            response = client.models.generate_content(
-                model=MODEL,
+            # Use the TTS model explicitly for audio generation
+            response = client.generate_content(
+                model=TTS_MODEL,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
@@ -80,15 +100,24 @@ def generate_voiceover(
         if not audio_data:
             raise RuntimeError(
                 f"No audio data returned by TTS for scene '{scene_id}'. "
-                f"Check your Gemini API key and quota."
+                f"Check your API key and quota."
             )
         
         with open(raw_path, "wb") as f:
             f.write(audio_data)
         
-        # Convert to MP3 (check exit code)
+        # Convert to MP3 (check exit code) - cross-platform
+        import platform
+        system = platform.system()
+        
+        if system == "Windows":
+            # Windows may need different ffmpeg path
+            ffmpeg_cmd = "ffmpeg"
+        else:
+            ffmpeg_cmd = "ffmpeg"
+        
         ffmpeg_result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
+            [ffmpeg_cmd, "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
              "-i", raw_path, "-b:a", "192k", mp3_path],
             capture_output=True, text=True,
         )
@@ -123,16 +152,38 @@ def generate_voiceover(
     return durations
 
 
+# Backwards compatibility - keep old function signature
+def generate_voiceover_legacy(
+    voiceover_scripts: dict[str, str],
+    output_dir: str,
+    voice: str = VOICE,
+) -> dict[str, float]:
+    """Legacy function for backwards compatibility."""
+    return generate_voiceover(voiceover_scripts, output_dir, voice, api_provider="gemini")
+
+
 if __name__ == "__main__":
     import json, sys
     
     if len(sys.argv) < 2:
-        print("Usage: python viral_tts.py <analysis.json> [output_dir]")
+        print("Usage: python viral_tts.py <analysis.json> [output_dir] [--api gemini|vertex]")
         sys.exit(1)
     
     with open(sys.argv[1]) as f:
         analysis = json.load(f)
     
     out_dir = sys.argv[2] if len(sys.argv) > 2 else "./audio_viral"
-    durations = generate_voiceover(analysis["voiceover_scripts"], out_dir)
+    api_provider = "gemini"
+    
+    # Check for API arg
+    if "--api" in sys.argv:
+        idx = sys.argv.index("--api")
+        if idx + 1 < len(sys.argv):
+            api_provider = sys.argv[idx + 1]
+    
+    durations = generate_voiceover(
+        analysis["voiceover_scripts"], 
+        out_dir,
+        api_provider=api_provider,
+    )
     print(json.dumps(durations, indent=2))

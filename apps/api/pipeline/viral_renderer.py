@@ -3,6 +3,11 @@
 
 Generates TutorialVideo.tsx and Root.tsx dynamically based on repo analysis,
 then renders with Remotion CLI.
+
+Supports different content types:
+- instagram_reel: 9:16 (1080x1920), ~30s
+- youtube_reel: 9:16 (1080x1920), ~45s  
+- youtube_long: 16:9 (1920x1080), ~5-10min
 """
 
 import json
@@ -11,6 +16,9 @@ import re
 import subprocess
 from pathlib import Path
 from dataclasses import asdict
+from typing import Optional
+
+from .checkpoint import ContentType
 
 
 FPS = 30
@@ -59,17 +67,34 @@ def generate_composition(
     durations: dict[str, float],
     music_track: str = "music/tech.mp3",
     music_volume: float = 0.22,
+    content_type: str = "youtube_reel",
+    audio_dir: str = "audio",
 ) -> None:
-    """Generate TutorialVideo.tsx with dynamic scenes based on analysis."""
+    """Generate TutorialVideo.tsx with dynamic scenes based on analysis.
     
-    scenes = analysis["scenes"]
+    Args:
+        analysis: Repository analysis data
+        durations: Dict of scene_id -> duration in seconds
+        music_track: Path to background music
+        music_volume: Volume level (0.0-1.0)
+        content_type: Content type preset (instagram_reel, youtube_reel, youtube_long)
+        audio_dir: Directory containing TTS audio files (relative to output)
+    """
+    
+    scenes = analysis.get("scenes", [])
+    
+    # Get content type specs
+    content_spec = ContentType.from_string(content_type).get_specs()
+    width = content_spec.get("width", 1920)
+    height = content_spec.get("height", 1080)
+    aspect_ratio = content_spec.get("aspect_ratio", "16:9")
     
     # Build SCENES array
     scene_entries = []
     for i, scene_id in enumerate(scenes):
         dur = durations.get(scene_id, 5.0)
         scene_entries.append(
-            f'  {{ id: "{scene_id}", dur: Math.ceil({dur:.3f} * FPS), audio: "audio_viral/scene_{i:02d}.mp3" }}'
+            f'  {{ id: "{scene_id}", dur: Math.ceil({dur:.3f} * FPS), audio: "{audio_dir}/scene_{i:02d}.mp3" }}'
         )
     scenes_array = ",\n".join(scene_entries)
     
@@ -77,17 +102,19 @@ def generate_composition(
     
     # Build scene data — use proper escaping to prevent broken JS strings
     raw_data = {
-        "name": analysis["name"],
-        "fullName": analysis["full_name"],
-        "description": analysis["description"],
-        "stars": analysis["stars"],
-        "forks": analysis["forks"],
-        "language": analysis["language"],
-        "hookStyle": analysis["hook_style"],
-        "hookText": analysis["hook_text"],
-        "tagline": analysis["tagline"],
-        "features": analysis["features"],
-        "techStack": analysis["tech_stack"],
+        "name": analysis.get("name", ""),
+        "fullName": analysis.get("full_name", ""),
+        "description": analysis.get("description", ""),
+        "stars": analysis.get("stars", 0),
+        "forks": analysis.get("forks", 0),
+        "language": analysis.get("language", ""),
+        "hookStyle": analysis.get("hook_style", "problem"),
+        "hookText": analysis.get("hook_text", ""),
+        "tagline": analysis.get("tagline", ""),
+        "features": analysis.get("features", []),
+        "techStack": analysis.get("tech_stack", []),
+        "contentType": content_type,
+        "aspectRatio": aspect_ratio,
     }
     scene_data = _dict_to_js_object(raw_data)
     
@@ -116,6 +143,26 @@ def generate_composition(
         for c in sorted(scene_imports)
     )
     
+    # Calculate background position based on aspect ratio
+    # For vertical video (9:16), center the 16:9 content
+    bg_width = 1920
+    bg_height = 1080
+    bg_style = "{ backgroundColor: '#0a0a0a' }"
+    
+    if aspect_ratio == "9:16":
+        # Vertical video - use a centered container
+        bg_style = """{{ 
+          backgroundColor: "#0a0a0a",
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }}"""
+        container_style = "{ width: 1080, height: 1920 }"
+    else:
+        container_style = "{ width: 1920, height: 1080 }"
+    
     tutorial_tsx = f"""import {{ Audio, staticFile }} from "remotion";
 import {{ TransitionSeries, linearTiming }} from "@remotion/transitions";
 import {{ slide }} from "@remotion/transitions/slide";
@@ -136,22 +183,24 @@ function getSceneDur(id: string): number {{
 
 export const TutorialVideo = () => {{
   return (
-    <div style={{ {{ backgroundColor: "#0a0a0a", width: 1920, height: 1080 }} }}>
-      {{/* Background music */}}
-      <Audio src={{staticFile("{music_track}")}} volume={{{music_volume}}} />
-      
-      <TransitionSeries>
-        {{/* Scene audio tracks */}}
-        {{SCENES.map((s, i) => (
-          <TransitionSeries.Sequence key={{s.id + "-audio"}} durationInFrames={{s.dur}}>
-            <Audio src={{staticFile(s.audio)}} volume={{0.9}} />
-          </TransitionSeries.Sequence>
-        ))}}
-      </TransitionSeries>
+    <div style={bg_style}>
+      <div style={container_style}>
+        {{/* Background music */}}
+        <Audio src={{staticFile("{music_track}")}} volume={{{music_volume}}} />
+        
+        <TransitionSeries>
+          {{/* Scene audio tracks */}}
+          {{SCENES.map((s, i) => (
+            <TransitionSeries.Sequence key={{s.id + "-audio"}} durationInFrames={{s.dur}}>
+              <Audio src={{staticFile(s.audio)}} volume={{0.9}} />
+            </TransitionSeries.Sequence>
+          ))}}
+        </TransitionSeries>
 
-      <TransitionSeries>
-        {"".join(scene_renders)}
-      </TransitionSeries>
+        <TransitionSeries>
+          {"".join(scene_renders)}
+        </TransitionSeries>
+      </div>
     </div>
   );
 }};
@@ -171,8 +220,8 @@ export const RemotionRoot = () => {{
       component={{TutorialVideo}}
       durationInFrames={{TOTAL}}
       fps={{FPS}}
-      width={{1920}}
-      height={{1080}}
+      width={{{width}}}
+      height={{{height}}}
     />
   );
 }};
@@ -184,6 +233,7 @@ export const RemotionRoot = () => {{
     (src_dir / "Root.tsx").write_text(root_tsx)
     
     print(f"  📝 Generated composition: {len(scenes)} scenes, {total_dur:.1f}s")
+    print(f"     Resolution: {width}x{height} ({aspect_ratio})")
 
 
 def get_scene_component(scene_id: str) -> str:
@@ -198,21 +248,42 @@ def get_scene_component(scene_id: str) -> str:
     }.get(scene_id, "HookScene")
 
 
-def render_video(output_name: str = "viral-output.mp4", concurrency: int = 4) -> str:
-    """Render the video using Remotion CLI."""
+def render_video(
+    output_name: str = "viral-output.mp4",
+    concurrency: int = 2,
+    composition_id: str = "ViralVideo",
+) -> str:
+    """Render the video using Remotion CLI.
+    
+    Args:
+        output_name: Output filename
+        concurrency: Number of parallel renders
+        composition_id: Remotion composition ID to render
+    
+    Returns:
+        Path to rendered video
+    """
     
     output_path = str(VIDEO_DIR / "out" / output_name)
     
     print(f"  🎬 Rendering video...")
     subprocess.run(
-        ["npx", "remotion", "render", "ViralVideo", output_path,
+        ["npx", "remotion", "render", composition_id, output_path,
          f"--concurrency={concurrency}"],
         cwd=str(VIDEO_DIR),
         check=True,
     )
     
-    # Cleanup chrome processes
-    subprocess.run(["pkill", "-f", "chrome-headless-shell"], capture_output=True)
+    # Cleanup chrome processes - cross-platform
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "chrome-headless-shell.exe"], capture_output=True)
+    elif system == "Darwin":  # macOS
+        subprocess.run(["pkill", "-f", "chrome"], capture_output=True)
+    else:  # Linux
+        subprocess.run(["pkill", "-f", "chrome-headless-shell"], capture_output=True)
     
     size_mb = os.path.getsize(output_path) / (1024 * 1024)
     print(f"  ✅ Output: {output_path} ({size_mb:.1f} MB)")
@@ -220,11 +291,16 @@ def render_video(output_name: str = "viral-output.mp4", concurrency: int = 4) ->
     return output_path
 
 
+def get_content_type_from_analysis(analysis: dict) -> str:
+    """Extract content type from analysis data."""
+    return analysis.get("content_type", "youtube_reel")
+
+
 if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 3:
-        print("Usage: python viral_renderer.py <analysis.json> <durations.json> [output.mp4]")
+        print("Usage: python viral_renderer.py <analysis.json> <durations.json> [output.mp4] [content_type]")
         sys.exit(1)
     
     with open(sys.argv[1]) as f:
@@ -233,6 +309,7 @@ if __name__ == "__main__":
         durations = json.load(f)
     
     output = sys.argv[3] if len(sys.argv) > 3 else "viral-output.mp4"
+    content_type = sys.argv[4] if len(sys.argv) > 4 else "youtube_reel"
     
-    generate_composition(analysis, durations)
+    generate_composition(analysis, durations, content_type=content_type)
     render_video(output)

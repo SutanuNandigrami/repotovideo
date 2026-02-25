@@ -1,8 +1,16 @@
 """
-🔥 Viral Video Analyzer — Gemini + URL Context
+🔥 Viral Video Analyzer — Gemini + URL Context + File Support
 
-Analyzes a GitHub repo using Gemini's URL context tool and produces
-everything needed for a viral promo video.
+Analyzes a GitHub repo, local file (MD/TXT/PDF), or other content using 
+Gemini's URL context tool or direct content and produces everything needed 
+for a viral promo video.
+
+Supports:
+- GitHub URLs
+- Local markdown, text, and PDF files
+- Multiple content types (Instagram Reels, YouTube Shorts, YouTube Long)
+- Graceful abort when source is inaccessible
+- Vertex AI as alternative to Gemini
 """
 
 import json
@@ -11,9 +19,20 @@ import asyncio
 import sys
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 from google import genai
 from google.genai import types
+
+# Import our new modules
+from .checkpoint import ContentType, PipelineStep
+from .source_validator import (
+    validate_source,
+    get_source_display_name,
+    detect_source_type,
+    SourceError,
+)
+from .api_client import APIClient, create_api_client, APIProvider
 
 
 MAX_RETRIES = 3
@@ -162,6 +181,9 @@ class RepoAnalysis:
     scenes: list[str]
     voiceover_scripts: dict[str, str]
     music_mood: str
+    # Additional fields for content type
+    content_type: str = "youtube_reel"
+    source_content: Optional[str] = None
 
 
 # ── Schema that Gemini must conform to ──────────────────────────────
@@ -238,47 +260,140 @@ RESPONSE_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """You are a viral video producer analyzing GitHub repos. Your job is to extract the most impressive, shareable aspects and write punchy voiceover scripts.
-
-I'm giving you a GitHub repo URL. Use the URL context to read the repo page, README, and any other relevant info.
+def get_system_prompt(content_type: str = "youtube_reel") -> str:
+    """Get the system prompt based on content type."""
+    
+    content_spec = ContentType.from_string(content_type).get_specs()
+    duration_target = content_spec.get("duration_target", 45)
+    max_features = content_spec.get("max_features", 4)
+    max_tech = content_spec.get("max_tech", 8)
+    
+    # Adjust prompt based on content type
+    if content_type == "instagram_reel":
+        duration_hint = f"Keep it SHORT - {duration_target} seconds maximum."
+        scene_hint = "Include: hook, what, features, cta. Skip tech and stats for brevity."
+    elif content_type == "youtube_reel":
+        duration_hint = f"Keep it concise - around {duration_target} seconds."
+        scene_hint = "Include: hook, what, features, tech (if interesting), stats (if impressive), cta."
+    else:  # youtube_long
+        duration_hint = f"This is longer content - {duration_target//60} minutes. Be more detailed."
+        scene_hint = "Include all scenes: hook, what, features, tech, stats, cta. Go deeper on features."
+    
+    return f"""You are a viral video producer analyzing content for a promo video. Your job is to extract the most impressive, shareable aspects and write punchy voiceover scripts.
 
 RULES:
 - Write like Fireship — punchy, opinionated, no filler
-- Stars and forks must be actual numbers from the repo page, not made up
+- Stars and forks must be actual numbers if available, not made up
 - Voiceover must sound conversational, not robotic
-- Keep everything SHORT. 30-45 second video.
-- Return 3-4 features max, up to 8 tech_stack items
+- {duration_hint}
+- Return {max_features} features max, up to {max_tech} tech_stack items
 - tagline: 8 words max
 - hook_text: opening hook to grab attention in 3 seconds
-- hook_style: choose "counter" if the repo has massive stars (>10K), "momentum" if growing (>100 stars), or "problem" if newer/smaller — focus on the problem it solves
-- scenes: choose which scenes to include from [hook, what, features, tech, stats, cta]. Always include hook, what, features, cta. Only include "tech" if the tech stack is interesting enough to feature. Only include "stats" if the numbers are impressive.
+- hook_style: choose "counter" if there are massive stars (>10K), "momentum" if growing (>100 stars), or "problem" if newer/smaller — focus on the problem it solves
+- scenes: choose which scenes to include from [hook, what, features, tech, stats, cta]. {scene_hint}
 - voiceover_scripts: write a script for EVERY key (hook, what, features, tech, stats, cta) regardless of scenes chosen
 - If <100 stars, focus voiceovers on WHAT IT DOES, not vanity metrics
 - If >10K stars, lead with impressive numbers in the hook"""
 
 
-async def analyze_repo_for_viral(repo_url: str) -> RepoAnalysis:
-    """Analyze a repo using Gemini with URL context for viral video generation.
+async def analyze_source_for_viral(
+    source: str,
+    content_type: str = "youtube_reel",
+    api_provider: str = "gemini",
+    validate_before: bool = True,
+) -> RepoAnalysis:
+    """Analyze a source (GitHub URL or local file) for viral video generation.
     
-    Retries up to MAX_RETRIES times on failure.
+    This is the main entry point that:
+    1. Validates the source BEFORE any API calls
+    2. Extracts content from local files if applicable
+    3. Analyzes with Gemini/Vertex AI
+    
+    Args:
+        source: GitHub URL or path to local file (.md, .txt, .pdf)
+        content_type: Content type preset (instagram_reel, youtube_reel, youtube_long)
+        api_provider: API provider ("gemini" or "vertex")
+        validate_before: Whether to validate source before API calls (default: True)
+    
+    Returns:
+        RepoAnalysis object with all data needed for video generation
+    
+    Raises:
+        SourceError: If source is inaccessible
+        ValueError: If analysis fails after retries
     """
+    
+    # Step 1: Validate source BEFORE any API calls
+    if validate_before:
+        print(f"🔍 Validating source: {get_source_display_name(source)}...")
+        is_valid, error_msg, content = validate_source(source)
+        
+        if not is_valid:
+            raise SourceError(
+                f"❌ Source validation failed: {error_msg}\n"
+                f"   Source: {source}\n"
+                f"   Aborting before any API calls to save quota."
+            )
+        
+        # For GitHub URLs, content is fetched via API
+        # For local files, content is extracted directly
+        source_type = detect_source_type(source)
+        if source_type == "local_file":
+            print(f"   ✅ Source validated. Content extracted ({len(content)} chars)")
+        else:
+            print(f"   ✅ Source validated (GitHub URL)")
+    else:
+        content = None
+        source_type = detect_source_type(source)
+    
+    # Step 2: Create API client
+    client = create_api_client(provider=api_provider)
+    
+    # Step 3: Build the prompt based on source type
+    if source_type == "github_url":
+        prompt = f"Analyze this GitHub repo for a viral promo video: {source}"
+        tools = [types.Tool(url_context=types.UrlContext())]
+    else:
+        # For local files, provide the content directly
+        prompt = f"""Analyze this content for a viral promo video:
 
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    url_context_tool = types.Tool(url_context=types.UrlContext())
+{content}
 
+Provide a JSON response with the following structure based on the content."""
+        tools = []
+    
+    # Step 4: Run the analysis with retries
+    return await _analyze_with_retry(
+        client=client,
+        prompt=prompt,
+        content_type=content_type,
+        tools=tools,
+        source=source,
+    )
+
+
+async def _analyze_with_retry(
+    client: APIClient,
+    prompt: str,
+    content_type: str,
+    tools: list,
+    source: str,
+) -> RepoAnalysis:
+    """Run analysis with retry logic."""
+    
     last_error = None
-
+    
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            print(f"🔍 Attempt {attempt}/{MAX_RETRIES}: Analyzing {repo_url}...",
+            print(f"🔍 Attempt {attempt}/{MAX_RETRIES}: Analyzing {get_source_display_name(source)}...",
                   flush=True)
 
-            response = client.models.generate_content(
-                model="gemini-3.1-pro-preview",
-                contents=f"Analyze this GitHub repo for a viral promo video: {repo_url}",
+            response = client.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    tools=[url_context_tool],
+                    system_instruction=get_system_prompt(content_type),
+                    tools=tools if tools else None,
                     response_mime_type="application/json",
                     response_schema=RESPONSE_SCHEMA,
                 ),
@@ -290,7 +405,7 @@ async def analyze_repo_for_viral(repo_url: str) -> RepoAnalysis:
             data = _robust_parse_json(raw)
             
             # Successfully parsed — build the result
-            return _build_analysis(data)
+            return _build_analysis(data, content_type)
 
         except Exception as e:
             last_error = e
@@ -306,15 +421,26 @@ async def analyze_repo_for_viral(repo_url: str) -> RepoAnalysis:
     )
 
 
-def _build_analysis(data: dict) -> RepoAnalysis:
+def _build_analysis(data: dict, content_type: str = "youtube_reel") -> RepoAnalysis:
     """Build a RepoAnalysis from parsed JSON data. Model decides structure."""
     stars = _parse_stars(data.get("stars", 0))
     forks = _parse_stars(data.get("forks", 0))
 
+    # Get content type specs
+    content_spec = ContentType.from_string(content_type).get_specs()
+    max_features = content_spec.get("max_features", 4)
+    max_tech = content_spec.get("max_tech", 8)
+    allowed_scenes = content_spec.get("scenes", ["hook", "what", "features", "cta"])
+    
     # Model chooses scenes; use 'or' so empty lists from null-fix also get defaults
-    scenes = data.get("scenes") or ["hook", "what", "features", "cta"]
-    features = (data.get("features") or [])[:4]
-    tech_stack = (data.get("tech_stack") or [])[:8]
+    scenes = data.get("scenes") or allowed_scenes
+    # Filter to allowed scenes for content type
+    scenes = [s for s in scenes if s in allowed_scenes]
+    if not scenes:
+        scenes = allowed_scenes[:4]
+    
+    features = (data.get("features") or [])[:max_features]
+    tech_stack = (data.get("tech_stack") or [])[:max_tech]
 
     # Drop scenes that have no data to display
     if not features and "features" in scenes:
@@ -331,7 +457,7 @@ def _build_analysis(data: dict) -> RepoAnalysis:
     repo_name = data.get("name", "this repo")
     for scene_id in scenes:
         if scene_id not in voiceover:
-            voiceover[scene_id] = f"Check out {repo_name} on GitHub."
+            voiceover[scene_id] = f"Check out {repo_name}."
 
     return RepoAnalysis(
         name=data.get("name", ""),
@@ -350,18 +476,48 @@ def _build_analysis(data: dict) -> RepoAnalysis:
         scenes=scenes,
         voiceover_scripts=voiceover,
         music_mood=data.get("music_mood") or "tech",
+        content_type=content_type,
     )
+
+
+# Backwards compatibility - keep the old function name
+async def analyze_repo_for_viral(repo_url: str) -> RepoAnalysis:
+    """Analyze a repo using Gemini with URL context for viral video generation.
+    
+    This is the legacy function - recommends using analyze_source_for_viral instead.
+    """
+    return await analyze_source_for_viral(repo_url)
+
 
 if __name__ == "__main__":
     from dataclasses import asdict
 
     if len(sys.argv) < 2:
-        print("Usage: python viral_analyzer.py <github-url>")
+        print("Usage: python viral_analyzer.py <github-url|local-file> [--content-type type] [--api gemini|vertex]")
         sys.exit(1)
 
+    source = sys.argv[1]
+    content_type = "youtube_reel"
+    api_provider = "gemini"
+    
+    # Parse optional args
+    i = 2
+    while i < len(sys.argv):
+        if sys.argv[i] == "--content-type" and i + 1 < len(sys.argv):
+            content_type = sys.argv[i + 1]
+            i += 2
+        elif sys.argv[i] == "--api" and i + 1 < len(sys.argv):
+            api_provider = sys.argv[i + 1]
+            i += 2
+        else:
+            i += 1
+
     async def main():
-        url = sys.argv[1]
-        analysis = await analyze_repo_for_viral(url)
+        analysis = await analyze_source_for_viral(
+            source,
+            content_type=content_type,
+            api_provider=api_provider,
+        )
         print(json.dumps(asdict(analysis), indent=2))
 
     asyncio.run(main())

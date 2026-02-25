@@ -1,9 +1,21 @@
 {
-  "name": "repotovideo",
+  "name": "repo-to-video",
+  "version": "1.0.0",
+  "description": "Generate viral promo videos from GitHub repos or local files",
   "private": true,
+  "workspaces": [
+    "apps/video"
+  ],
   "scripts": {
-    "install:all": "pip install -r apps/api/requirements.txt && cd apps/video && npm install && cd ../.. && cd apps/web && npm install",
-    "dev:web": "cd apps/web && npm run dev",
-    "generate": "python3 generate.py"
-  }
+    "video": "npm run dev --workspace=apps/video",
+    "build:video": "npm run build --workspace=apps/video"
+  },
+  "keywords": [
+    "video",
+    "github",
+    "promo",
+    "ai",
+    "gemini"
+  ],
+  "license": "MIT"
 }
