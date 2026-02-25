@@ -1,5 +1,5 @@
 """
-🎤 Viral Video TTS — Gemini 2.5 Pro Preview TTS + Vertex AI Support
+[TTS] Viral Video TTS - Gemini 2.5 Pro Preview TTS + Vertex AI Support
 
 Generates voiceover audio for each scene using Gemini's natural TTS.
 Supports both Gemini API and Vertex AI API.
@@ -17,7 +17,7 @@ from google.genai import types
 from .api_client import create_api_client, APIProvider
 
 
-TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.0-flash-exp")
+TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.5-pro-preview-tts")
 VOICE = "Puck"  # Natural, playful, energetic
 
 TONE_HINTS = {
@@ -68,7 +68,7 @@ def generate_voiceover(
         tone = TONE_HINTS.get(scene_id, "Say this naturally and engagingly:")
         prompt = f"{tone} {script}"
         
-        print(f"  🎤 Generating {scene_id} ({fname})...")
+        print(f"  [TTS] Generating {scene_id} ({fname})...")
         
         try:
             # Use the TTS model explicitly for audio generation
@@ -135,11 +135,11 @@ def generate_voiceover(
             )
             dur = float(result.stdout.strip())
         except (ValueError, AttributeError):
-            print(f"    ⚠️  Could not read duration for {scene_id}, using estimate")
+            print(f"   Could not read duration for {scene_id}, using estimate")
             dur = max(len(script.split()) * 0.35, 3.0)  # ~0.35s per word
         
         durations[scene_id] = dur
-        print(f"    ✅ {dur:.2f}s")
+        print(f"    [OK] {dur:.2f}s")
         
         # Cleanup temp file
         try:

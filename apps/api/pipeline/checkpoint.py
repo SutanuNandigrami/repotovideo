@@ -1,5 +1,5 @@
 """
-📦 Checkpoint System — Step-based Progress Tracking with Local File Outputs
+ Checkpoint System — Step-based Progress Tracking with Local File Outputs
 
 Provides checkpoint functionality to save progress after each step and 
 allow resuming from a specific step if it fails.
@@ -202,7 +202,7 @@ class CheckpointManager:
         """Save checkpoint to disk."""
         checkpoint.updated_at = datetime.utcnow().isoformat() + "Z"
         self.checkpoint_file.write_text(
-            json.dumps(checkpoint.to_dict(), indent=2, ensure_ascii=False),
+            json.dumps(checkpoint.to_dict(), indent=2, ensure_ascii=True),
             encoding="utf-8"
         )
     
@@ -284,11 +284,16 @@ class CheckpointManager:
         return files
     
     def has_step_completed(self, step: PipelineStep) -> bool:
-        """Check if a step has already completed."""
+        """Check if a step has already completed successfully."""
         checkpoint = self.load_checkpoint()
         if not checkpoint:
             return False
         
+        # Check if this specific step is marked as completed
+        if checkpoint.step == step.value and checkpoint.status == "completed":
+            return True
+        
+        # Also check if we're past this step and it was successful
         step_order = PipelineStep.list_values()
         current_idx = step_order.index(checkpoint.step)
         target_idx = step_order.index(step.value)

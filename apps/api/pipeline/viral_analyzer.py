@@ -1,5 +1,5 @@
 """
-🔥 Viral Video Analyzer — Gemini + URL Context + File Support
+Viral Video Analyzer — Gemini + URL Context + File Support
 
 Analyzes a GitHub repo, local file (MD/TXT/PDF), or other content using 
 Gemini's URL context tool or direct content and produces everything needed 
@@ -138,7 +138,7 @@ def _robust_parse_json(raw: str) -> dict:
         data = json.loads(fixed)
         return _sanitize_nulls(data)
     except json.JSONDecodeError as e:
-        print(f"\n❌ All JSON parse attempts failed. Raw ({len(raw)} chars):\n{raw[:1500]}\n",
+        print(f"\n All JSON parse attempts failed. Raw ({len(raw)} chars):\n{raw[:1500]}\n",
               file=sys.stderr, flush=True)
         raise ValueError(f"Could not parse Gemini response as JSON: {e}") from e
 
@@ -325,12 +325,12 @@ async def analyze_source_for_viral(
     
     # Step 1: Validate source BEFORE any API calls
     if validate_before:
-        print(f"🔍 Validating source: {get_source_display_name(source)}...")
+        print(f"[SEARCH] Validating source: {get_source_display_name(source)}...")
         is_valid, error_msg, content = validate_source(source)
         
         if not is_valid:
             raise SourceError(
-                f"❌ Source validation failed: {error_msg}\n"
+                f" Source validation failed: {error_msg}\n"
                 f"   Source: {source}\n"
                 f"   Aborting before any API calls to save quota."
             )
@@ -339,9 +339,9 @@ async def analyze_source_for_viral(
         # For local files, content is extracted directly
         source_type = detect_source_type(source)
         if source_type == "local_file":
-            print(f"   ✅ Source validated. Content extracted ({len(content)} chars)")
+            print(f"   [OK] Source validated. Content extracted ({len(content)} chars)")
         else:
-            print(f"   ✅ Source validated (GitHub URL)")
+            print(f"   [OK] Source validated (GitHub URL)")
     else:
         content = None
         source_type = detect_source_type(source)
@@ -385,11 +385,11 @@ async def _analyze_with_retry(
     
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            print(f"🔍 Attempt {attempt}/{MAX_RETRIES}: Analyzing {get_source_display_name(source)}...",
+            print(f"[SEARCH] Attempt {attempt}/{MAX_RETRIES}: Analyzing {get_source_display_name(source)}...",
                   flush=True)
 
             response = client.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.1-pro-preview",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=get_system_prompt(content_type),
@@ -400,7 +400,7 @@ async def _analyze_with_retry(
             )
 
             raw = response.text
-            print(f"✅ Got response ({len(raw) if raw else 0} chars)", flush=True)
+            print(f"[OK] Got response ({len(raw) if raw else 0} chars)", flush=True)
 
             data = _robust_parse_json(raw)
             
@@ -409,7 +409,7 @@ async def _analyze_with_retry(
 
         except Exception as e:
             last_error = e
-            print(f"⚠️  Attempt {attempt} failed: {e}", file=sys.stderr, flush=True)
+            print(f"[!] Attempt {attempt} failed: {e}", file=sys.stderr, flush=True)
             if attempt < MAX_RETRIES:
                 wait = attempt * 2  # 2s, 4s backoff
                 print(f"   Retrying in {wait}s...", flush=True)

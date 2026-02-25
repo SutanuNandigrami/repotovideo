@@ -38,16 +38,17 @@ class SourceType:
         self.content = content
 
 
-def validate_github_url(url: str) -> Tuple[bool, str]:
+def validate_github_url(url: str) -> Tuple[bool, str, Optional[str]]:
     """Validate GitHub URL and check if accessible.
     
     Returns:
-        Tuple of (is_valid, error_message)
+        Tuple of (is_valid, error_message, content)
+        - content is always None for GitHub URLs (content fetched via API)
     """
     # Check if it's a valid GitHub URL pattern
     github_pattern = r'^https?://(?:www\.)?github\.com/[\w-]+/[\w.-]+/?$'
     if not re.match(github_pattern, url):
-        return False, f"Invalid GitHub URL format: {url}"
+        return False, f"Invalid GitHub URL format: {url}", None
     
     # Normalize URL (remove trailing slash)
     url = url.rstrip('/')
@@ -64,23 +65,23 @@ def validate_github_url(url: str) -> Tuple[bool, str]:
         
         with urllib.request.urlopen(request, timeout=10) as response:
             if response.status == 200:
-                return True, ""
+                return True, "", None
             else:
-                return False, f"GitHub returned status {response.status}"
+                return False, f"GitHub returned status {response.status}", None
                 
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return False, f"Repository not found (404): {url}"
+            return False, f"Repository not found (404): {url}", None
         elif e.code == 403:
-            return False, f"Repository access forbidden (403). May be private."
+            return False, f"Repository access forbidden (403). May be private.", None
         else:
-            return False, f"HTTP error {e.code} accessing {url}"
+            return False, f"HTTP error {e.code} accessing {url}", None
             
     except urllib.error.URLError as e:
-        return False, f"Network error accessing {url}: {e.reason}"
+        return False, f"Network error accessing {url}: {e.reason}", None
         
     except Exception as e:
-        return False, f"Error validating GitHub URL: {str(e)}"
+        return False, f"Error validating GitHub URL: {str(e)}", None
 
 
 def validate_local_file(file_path: str) -> Tuple[bool, str, Optional[str]]:

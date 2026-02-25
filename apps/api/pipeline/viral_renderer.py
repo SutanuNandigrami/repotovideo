@@ -1,5 +1,5 @@
 """
-🎬 Viral Video Renderer — Dynamic Remotion composition generator
+[VIDEO] Viral Video Renderer - Dynamic Remotion composition generator
 
 Generates TutorialVideo.tsx and Root.tsx dynamically based on repo analysis,
 then renders with Remotion CLI.
@@ -232,7 +232,7 @@ export const RemotionRoot = () => {{
     (src_dir / "TutorialVideo.tsx").write_text(tutorial_tsx)
     (src_dir / "Root.tsx").write_text(root_tsx)
     
-    print(f"  📝 Generated composition: {len(scenes)} scenes, {total_dur:.1f}s")
+    print(f"   Generated composition: {len(scenes)} scenes, {total_dur:.1f}s")
     print(f"     Resolution: {width}x{height} ({aspect_ratio})")
 
 
@@ -266,9 +266,16 @@ def render_video(
     
     output_path = str(VIDEO_DIR / "out" / output_name)
     
-    print(f"  🎬 Rendering video...")
+    # Use local npx from node_modules on Windows
+    import platform
+    if platform.system() == "Windows":
+        npx_cmd = str(VIDEO_DIR / "node_modules" / ".bin" / "npx.cmd")
+    else:
+        npx_cmd = "npx"
+    
+    print(f"  [VIDEO] Rendering video...")
     subprocess.run(
-        ["npx", "remotion", "render", composition_id, output_path,
+        [npx_cmd, "remotion", "render", composition_id, output_path,
          f"--concurrency={concurrency}"],
         cwd=str(VIDEO_DIR),
         check=True,
@@ -286,7 +293,7 @@ def render_video(
         subprocess.run(["pkill", "-f", "chrome-headless-shell"], capture_output=True)
     
     size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"  ✅ Output: {output_path} ({size_mb:.1f} MB)")
+    print(f"  [OK] Output: {output_path} ({size_mb:.1f} MB)")
     
     return output_path
 

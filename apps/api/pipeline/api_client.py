@@ -35,7 +35,7 @@ class APIConfig:
     api_key: Optional[str] = None
     project_id: Optional[str] = None
     location: Optional[str] = None
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-3.1-pro-preview"
     
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors."""
@@ -126,9 +126,9 @@ def create_api_client(
     # Set default models based on provider
     if model is None:
         if api_provider == APIProvider.GEMINI:
-            model = "gemini-2.0-flash"
+            model = "gemini-3.1-pro-preview"
         else:
-            model = "gemini-2.0-flash-001"
+            model = "gemini-3.1-pro-preview"
     
     config = APIConfig(
         provider=api_provider,
@@ -159,7 +159,7 @@ def get_available_providers() -> list[dict]:
         "name": "Gemini",
         "id": "gemini",
         "available": bool(gemini_key),
-        "model": "gemini-2.0-flash",
+        "model": "gemini-3.1-pro-preview",
     })
     
     # Check Vertex
@@ -171,14 +171,14 @@ def get_available_providers() -> list[dict]:
             "name": "Vertex AI",
             "id": "vertex",
             "available": True,
-            "model": "gemini-2.0-flash-001",
+            "model": "gemini-3.1-pro-preview",
         })
     else:
         providers.append({
             "name": "Vertex AI",
             "id": "vertex",
             "available": False,
-            "model": "gemini-2.0-flash-001",
+            "model": "gemini-3.1-pro-preview",
             "reason": "Requires GOOGLE_API_KEY and GOOGLE_CLOUD_PROJECT" if not vertex_key else "Requires GOOGLE_CLOUD_PROJECT",
         })
     

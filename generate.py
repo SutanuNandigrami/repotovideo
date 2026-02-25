@@ -91,21 +91,52 @@ def check_prerequisites():
         )
     
     if gemini_key:
-        print("✅ GEMINI_API_KEY found")
+        print("[OK] GEMINI_API_KEY found")
     if vertex_key and project_id:
-        print("✅ Vertex AI credentials found")
+        print("[OK] Vertex AI credentials found")
 
-    # Check ffmpeg
+    if gemini_key:
+        print("[OK] GEMINI_API_KEY found")
+    if vertex_key and project_id:
+        print("[OK] Vertex AI credentials found")
+
+    # Check ffmpeg - check multiple locations
     import platform
     system = platform.system()
     
+    ffmpeg_found = False
+    ffmpeg_path = None
+    
+    # First try system PATH
     if system == "Windows":
         ffmpeg_check = os.system("ffmpeg -version >nul 2>&1")
     else:
         ffmpeg_check = os.system("ffmpeg -version > /dev/null 2>&1")
     
-    if ffmpeg_check != 0:
-        errors.append("ffmpeg not found. Install: brew install ffmpeg (macOS) or apt install ffmpeg (Linux)")
+    if ffmpeg_check == 0:
+        ffmpeg_found = True
+    
+    # Check for local ffmpeg in project directory
+    if not ffmpeg_found:
+        base_dir = Path(__file__).parent
+        local_ffmpeg = base_dir / "ffmpeg-8.0.1-essentials_build" / "bin" / "ffmpeg.exe"
+        if local_ffmpeg.exists():
+            ffmpeg_path = str(local_ffmpeg.parent)
+            ffmpeg_found = True
+            # Add to PATH for this session
+            os.environ["PATH"] = ffmpeg_path + os.pathsep + os.environ.get("PATH", "")
+            print(f"[OK] Using local ffmpeg from: {local_ffmpeg}")
+        else:
+            # Try to find any ffmpeg.exe in the project directory
+            for ffmpeg_exe in base_dir.rglob("ffmpeg.exe"):
+                ffmpeg_path = str(ffmpeg_exe.parent)
+                ffmpeg_found = True
+                os.environ["PATH"] = ffmpeg_path + os.pathsep + os.environ.get("PATH", "")
+                print(f"[OK] Using ffmpeg from: {ffmpeg_exe}")
+                break
+    
+    if not ffmpeg_found:
+        errors.append("ffmpeg not found. Please download ffmpeg or place ffmpeg.exe in the project directory.")
 
     # Check node_modules
     if not (VIDEO_DIR / "node_modules").exists():
@@ -141,7 +172,7 @@ async def run_pipeline_step_analyze(
     api_provider: str,
 ):
     """Run the analysis step."""
-    print("\n🤖 Step 1/4 — Analyzing source with AI...")
+    print("\n[AI] Step 1/4 -- Analyzing source with AI...")
     
     try:
         analysis = await analyze_source_for_viral(
@@ -151,15 +182,16 @@ async def run_pipeline_step_analyze(
         )
         analysis_dict = asdict(analysis)
         
-        print(f"   ⭐ {analysis.stars:,} stars | 🍴 {analysis.forks:,} forks | 📝 {analysis.language}")
+        print(f"   [*] {analysis.stars:,} stars | [F] {analysis.forks:,} forks | [L] {analysis.language}")
         print(f"   Hook: \"{analysis.hook_text}\"")
-        print(f"   Scenes: {' → '.join(analysis.scenes)}")
+        print(f"   Scenes: {' -> '.join(analysis.scenes)}")
         print(f"   Style: {analysis.hook_style} ({len(analysis.features)} features, {len(analysis.tech_stack)} tech)")
         
-        # Save analysis
+        # Save analysis - escape non-ASCII to prevent Windows encoding issues
         output_dir = Path(checkpoint_mgr.output_dir)
         analysis_path = output_dir / "analysis.json"
-        analysis_path.write_text(json.dumps(analysis_dict, indent=2, ensure_ascii=False))
+        # Use ensure_ascii=True to escape emojis/unicode from AI output
+        analysis_path.write_text(json.dumps(analysis_dict, indent=2, ensure_ascii=True), encoding="utf-8")
         
         # Update checkpoint
         checkpoint_mgr.complete_step(
@@ -187,7 +219,7 @@ def run_pipeline_step_tts(
     api_provider: str,
 ):
     """Run the TTS step."""
-    print(f"\n🎤 Step 2/4 — Generating voiceover (voice: {voice})...")
+    print(f"\n[TTS] Step 2/4 -- Generating voiceover (voice: {voice})...")
     
     output_dir = Path(checkpoint_mgr.output_dir)
     audio_dir = str(output_dir / "audio")
@@ -294,7 +326,7 @@ async def run_pipeline(
     if resume:
         checkpoint = checkpoint_mgr.load_checkpoint()
         if checkpoint:
-            print(f"\n🔄 Resuming job: {job_id}")
+            print(f"\n[RESUME] Resuming job: {job_id}")
             print(f"   Last completed step: {checkpoint.step}")
             print(f"   Status: {checkpoint.status}")
         else:
@@ -304,17 +336,17 @@ async def run_pipeline(
     if clean or not resume:
         # Clean start
         if clean:
-            print(f"\n🧹 Starting fresh (--clean specified)")
+            print(f"\n[CLEAN] Starting fresh (--clean specified)")
         else:
-            print(f"\n🚀 Starting new job: {job_id}")
+            print(f"\n[START] Starting new job: {job_id}")
         
         # Validate source BEFORE creating checkpoint
-        print(f"🔍 Validating source: {get_source_display_name(source)}")
+        print(f"[SEARCH] Validating source: {get_source_display_name(source)}")
         is_valid, error_msg, _ = validate_source(source)
         if not is_valid:
             print(f"\n[X] Source validation failed: {error_msg}")
             sys.exit(1)
-        print("   ✅ Source validated")
+        print("   [OK] Source validated")
         
         # Create new checkpoint
         checkpoint_mgr = CheckpointManager(str(output_dir))
@@ -333,7 +365,7 @@ async def run_pipeline(
         current_step = checkpoint_mgr.get_current_step()
         
         if checkpoint_mgr.has_step_completed(PipelineStep.ANALYZE):
-            print("\n⏭️  Step 1/4 — Analysis (already completed)")
+            print("\n[SKIP] Step 1/4 -- Analysis (already completed)")
             # Load existing analysis
             output_dir = Path(checkpoint_mgr.output_dir)
             analysis_path = output_dir / "analysis.json"
@@ -349,7 +381,7 @@ async def run_pipeline(
         
         # Step 2: TTS
         if checkpoint_mgr.has_step_completed(PipelineStep.TTS):
-            print("\n⏭️  Step 2/4 — TTS (already completed)")
+            print("\n[SKIP] Step 2/4 -- TTS (already completed)")
             output_dir = Path(checkpoint_mgr.output_dir)
             durations_path = output_dir / "durations.json"
             if durations_path.exists():
@@ -363,7 +395,7 @@ async def run_pipeline(
         
         # Step 3: Composition
         if checkpoint_mgr.has_step_completed(PipelineStep.GENERATE_SCENES):
-            print("\n⏭️  Step 3/4 — Composition (already completed)")
+            print("\n[SKIP] Step 3/4 -- Composition (already completed)")
         else:
             run_pipeline_step_composition(
                 checkpoint_mgr, analysis, durations, music, music_volume
@@ -371,24 +403,24 @@ async def run_pipeline(
         
         # Step 4: Render
         if skip_render:
-            print("\n⏭️  Step 4/4 — Rendering (skipped with --skip-render)")
-            print(f"\n✅ Pipeline complete! Composition generated at:")
+            print("\n[SKIP] Step 4/4 -- Rendering (skipped with --skip-render)")
+            print(f"\n[OK] Pipeline complete! Composition generated at:")
             print(f"   {output_dir}")
         elif checkpoint_mgr.has_step_completed(PipelineStep.RENDER_VIDEO):
-            print("\n⏭️  Step 4/4 — Render (already completed)")
+            print("\n[SKIP] Step 4/4 -- Render (already completed)")
             output_dir = Path(checkpoint_mgr.output_dir)
             output_path = output_dir / "out" / output_name
-            print(f"\n✅ Video already rendered:")
+            print(f"\n[OK] Video already rendered:")
             print(f"   {output_path}")
         else:
             output_path = run_pipeline_step_render(
                 checkpoint_mgr, output_name
             )
             
-            print(f"\n✅ Done! Your viral video is at:")
+            print(f"\n[OK] Done! Your viral video is at:")
             print(f"   {output_path}")
             total_dur = sum(durations.values())
-            print(f"   Duration: {total_dur:.1f}s | Ready for social media 🚀")
+            print(f"   Duration: {total_dur:.1f}s | Ready for social media")
         
         return True
         
