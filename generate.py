@@ -33,6 +33,7 @@ import os
 import sys
 from pathlib import Path
 from dataclasses import asdict
+from typing import Optional
 
 # Load .env file if it exists
 from pathlib import Path
@@ -67,6 +68,17 @@ from pipeline.api_client import get_available_providers
 
 VIDEO_DIR = Path(__file__).parent / "apps" / "video"
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "output"
+STYLE_CHOICES = [
+    "auto",
+    "repo-promo",
+    "explainer",
+    "story",
+    "listicle",
+    "myth-vs-fact",
+    "case-study",
+    "launch-teaser",
+]
+RENDER_PROFILE_CHOICES = ["draft", "balanced", "quality"]
 
 MUSIC_MAP = {
     "chill": "music/chill.mp3",
@@ -76,8 +88,8 @@ MUSIC_MAP = {
 }
 
 
-def check_prerequisites():
-    """Check that required tools and API keys are available."""
+def check_prerequisites(api_provider: str):
+    """Check that required tools and API keys are available for selected provider."""
     errors = []
 
     # Check for at least one API key
@@ -85,20 +97,19 @@ def check_prerequisites():
     vertex_key = os.environ.get("GOOGLE_API_KEY")
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     
-    if not gemini_key and not vertex_key:
-        errors.append(
-            "No API key set. Set GEMINI_API_KEY or GOOGLE_API_KEY + GOOGLE_CLOUD_PROJECT"
-        )
-    
-    if gemini_key:
-        print("[OK] GEMINI_API_KEY found")
-    if vertex_key and project_id:
-        print("[OK] Vertex AI credentials found")
-
-    if gemini_key:
-        print("[OK] GEMINI_API_KEY found")
-    if vertex_key and project_id:
-        print("[OK] Vertex AI credentials found")
+    if api_provider == "gemini":
+        if not gemini_key:
+            errors.append("GEMINI_API_KEY is required when using --api gemini")
+        else:
+            print("[OK] GEMINI_API_KEY found")
+    else:
+        if not vertex_key:
+            errors.append("GOOGLE_API_KEY is required when using --api vertex")
+        if not project_id:
+            errors.append("GOOGLE_CLOUD_PROJECT is required when using --api vertex")
+        if vertex_key and project_id:
+            location = os.environ.get("GOOGLE_CLOUD_LOCATION") or os.environ.get("GOOGLE_CLOUD_REGION") or "us-central1"
+            print(f"[OK] Vertex AI credentials found (project={project_id}, location={location})")
 
     # Check ffmpeg - check multiple locations
     import platform
@@ -169,6 +180,7 @@ async def run_pipeline_step_analyze(
     checkpoint_mgr: CheckpointManager,
     source: str,
     content_type: str,
+    style: str,
     api_provider: str,
 ):
     """Run the analysis step."""
@@ -178,6 +190,7 @@ async def run_pipeline_step_analyze(
         analysis = await analyze_source_for_viral(
             source,
             content_type=content_type,
+            style=style,
             api_provider=api_provider,
         )
         analysis_dict = asdict(analysis)
@@ -285,12 +298,23 @@ def run_pipeline_step_composition(
 def run_pipeline_step_render(
     checkpoint_mgr: CheckpointManager,
     output_name: str,
-    concurrency: int = 2,
+    concurrency: Optional[int] = None,
+    render_profile: str = "balanced",
+    codec: Optional[str] = None,
+    preset: Optional[str] = None,
+    crf: Optional[int] = None,
 ):
     """Run the video rendering step."""
     print(f"\n[VIDEO] Step 4/4 — Rendering video...")
     
-    output_path = render_video(output_name, concurrency=concurrency)
+    output_path = render_video(
+        output_name,
+        concurrency=concurrency,
+        render_profile=render_profile,
+        codec=codec,
+        preset=preset,
+        crf=crf,
+    )
     
     # Update checkpoint
     checkpoint_mgr.complete_step(
@@ -304,11 +328,17 @@ def run_pipeline_step_render(
 async def run_pipeline(
     source: str,
     content_type: str,
+    style: str,
     music: str,
     voice: str,
     music_volume: float,
     api_provider: str,
     output_name: str,
+    concurrency: Optional[int],
+    render_profile: str,
+    codec: Optional[str],
+    preset: Optional[str],
+    crf: Optional[int],
     skip_render: bool,
     resume: bool,
     clean: bool,
@@ -354,9 +384,14 @@ async def run_pipeline(
             job_id=job_id,
             source=source,
             content_type=content_type,
+            style=style,
             music=music,
             voice=voice,
             music_volume=music_volume,
+            render_profile=render_profile,
+            codec=codec,
+            preset=preset,
+            crf=crf,
         )
     
     # Run pipeline steps
@@ -375,7 +410,7 @@ async def run_pipeline(
                 raise RuntimeError("Analysis file not found")
         else:
             analysis = await run_pipeline_step_analyze(
-                checkpoint_mgr, source, content_type, api_provider
+                checkpoint_mgr, source, content_type, style, api_provider
             )
             analysis = asdict(analysis)
         
@@ -420,7 +455,13 @@ async def run_pipeline(
             print(f"   {output_path}")
         else:
             output_path = run_pipeline_step_render(
-                checkpoint_mgr, output_name
+                checkpoint_mgr,
+                output_name,
+                concurrency=concurrency,
+                render_profile=render_profile,
+                codec=codec,
+                preset=preset,
+                crf=crf,
             )
             
             print(f"\n[OK] Done! Your viral video is at:")
@@ -495,6 +536,43 @@ async def main():
     )
     
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=0,
+        help="Render concurrency. Use 0 (default) for auto (CPU cores - 1, capped).",
+    )
+
+    parser.add_argument(
+        "--style",
+        choices=STYLE_CHOICES,
+        default="auto",
+        help="Narration/scene style preset (default: auto)",
+    )
+
+    parser.add_argument(
+        "--render-profile",
+        choices=RENDER_PROFILE_CHOICES,
+        default="balanced",
+        help="Render speed/quality profile (default: balanced)",
+    )
+
+    parser.add_argument(
+        "--codec",
+        help="Override codec (e.g. h264, h265)",
+    )
+
+    parser.add_argument(
+        "--preset",
+        help="Override encoder preset (used for h264 as x264 preset)",
+    )
+
+    parser.add_argument(
+        "--crf",
+        type=int,
+        help="Override CRF value (lower = higher quality)",
+    )
+
+    parser.add_argument(
         "--skip-render",
         action="store_true",
         help="Generate composition but skip rendering",
@@ -543,7 +621,7 @@ async def main():
             print(f"    Default model: {p['model']}")
         sys.exit(0)
     
-    check_prerequisites()
+    check_prerequisites(args.api)
     
     # Extract source name for output
     source = args.source
@@ -558,16 +636,26 @@ async def main():
     print(f"   Source: {get_source_display_name(source)}")
     print(f"   Content: {args.content_type}")
     print(f"   Music: {args.music} | Voice: {args.voice} | API: {args.api}")
+    print(
+        f"   Style: {args.style} | Render: {args.render_profile}"
+        f" (codec={args.codec or 'auto'}, preset={args.preset or 'auto'}, crf={args.crf if args.crf is not None else 'auto'})"
+    )
     print()
     
     await run_pipeline(
         source=source,
         content_type=args.content_type,
+        style=args.style,
         music=args.music,
         voice=args.voice,
         music_volume=args.music_volume,
         api_provider=args.api,
         output_name=output_name,
+        concurrency=(None if args.concurrency == 0 else args.concurrency),
+        render_profile=args.render_profile,
+        codec=args.codec,
+        preset=args.preset,
+        crf=args.crf,
         skip_render=args.skip_render,
         resume=args.resume,
         clean=args.clean,

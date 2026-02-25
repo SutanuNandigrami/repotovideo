@@ -10,4 +10,22 @@ export interface RepoData {
   tagline: string;
   features: Array<{ emoji: string; title: string; desc: string }>;
   techStack: Array<{ emoji: string; name: string }>;
+  style?:
+    | "repo-promo"
+    | "explainer"
+    | "story"
+    | "listicle"
+    | "myth-vs-fact"
+    | "case-study"
+    | "launch-teaser";
+  requestedStyle?:
+    | "auto"
+    | "repo-promo"
+    | "explainer"
+    | "story"
+    | "listicle"
+    | "myth-vs-fact"
+    | "case-study"
+    | "launch-teaser";
+  styleReason?: string;
 }

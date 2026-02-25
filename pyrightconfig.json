@@ -1,0 +1,11 @@
+{
+  "include": [
+    "generate.py",
+    "apps/api/**/*.py"
+  ],
+  "extraPaths": [
+    "apps/api"
+  ],
+  "venvPath": ".",
+  "typeCheckingMode": "basic"
+}

@@ -15,7 +15,6 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from dataclasses import asdict
 from typing import Optional
 
 from .checkpoint import ContentType
@@ -23,6 +22,51 @@ from .checkpoint import ContentType
 
 FPS = 30
 VIDEO_DIR = Path(__file__).resolve().parent.parent.parent / "video"
+RENDER_PROFILES: dict[str, dict[str, object]] = {
+    "draft": {"codec": "h264", "preset": "veryfast", "crf": 30},
+    "balanced": {"codec": "h264", "preset": "medium", "crf": 22},
+    "quality": {"codec": "h264", "preset": "slow", "crf": 18},
+}
+HOOK_STYLES = {"counter", "momentum", "problem"}
+
+
+def _parse_positive_int_env(var_name: str) -> Optional[int]:
+    """Parse a positive integer from environment variables."""
+    raw = os.environ.get(var_name)
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        return None
+    return None
+
+
+def _resolve_render_profile(
+    render_profile: str,
+    codec: Optional[str],
+    preset: Optional[str],
+    crf: Optional[int],
+) -> tuple[str, str, int, str]:
+    """Resolve render profile and optional encoding overrides."""
+    normalized_profile = render_profile if render_profile in RENDER_PROFILES else "balanced"
+    profile_defaults = RENDER_PROFILES[normalized_profile]
+
+    resolved_codec = str(codec or profile_defaults["codec"])
+    resolved_preset = str(preset or profile_defaults["preset"])
+    profile_crf = profile_defaults.get("crf", 22)
+    default_crf = profile_crf if isinstance(profile_crf, int) else 22
+    resolved_crf = crf if crf is not None else default_crf
+    return normalized_profile, resolved_codec, resolved_crf, resolved_preset
+
+
+def _normalize_hook_style(value: object) -> str:
+    """Ensure generated hook style conforms to TS union type."""
+    if isinstance(value, str) and value in HOOK_STYLES:
+        return value
+    return "problem"
 
 
 def _sanitize_js_string(s: str) -> str:
@@ -123,22 +167,23 @@ def generate_composition(
     total_dur = sum(durations.get(s, 5.0) for s in scenes)
     
     # Build scene data — use proper escaping to prevent broken JS strings
-    raw_data = {
+    repo_data = {
         "name": analysis.get("name", ""),
         "fullName": analysis.get("full_name", ""),
         "description": analysis.get("description", ""),
         "stars": analysis.get("stars", 0),
         "forks": analysis.get("forks", 0),
         "language": analysis.get("language", ""),
-        "hookStyle": analysis.get("hook_style", "problem"),
+        "hookStyle": _normalize_hook_style(analysis.get("hook_style")),
         "hookText": analysis.get("hook_text", ""),
         "tagline": analysis.get("tagline", ""),
         "features": analysis.get("features", []),
         "techStack": analysis.get("tech_stack", []),
-        "contentType": content_type,
-        "aspectRatio": aspect_ratio,
+        "style": analysis.get("style", "repo-promo"),
+        "requestedStyle": analysis.get("requested_style", "auto"),
+        "styleReason": analysis.get("style_reason", ""),
     }
-    scene_data = _dict_to_js_object(raw_data)
+    scene_data = _dict_to_js_object(repo_data)
     
     # Build scene component imports & renders
     scene_imports = set()
@@ -149,7 +194,7 @@ def generate_composition(
         scene_imports.add(component)
         scene_renders.append(f"""
         <TransitionSeries.Sequence durationInFrames={{getSceneDur("{scene_id}")}}>
-          <{component} data={{DATA}} />
+          <{component} data={{REPO_DATA}} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition
           presentation={{slide({{ direction: "from-right" }})}}
@@ -188,8 +233,8 @@ def generate_composition(
     tutorial_tsx = f"""import {{ Audio, staticFile }} from "remotion";
 import {{ TransitionSeries, linearTiming }} from "@remotion/transitions";
 import {{ slide }} from "@remotion/transitions/slide";
-import {{ fade }} from "@remotion/transitions/fade";
 {imports_str}
+import type {{ RepoData }} from "./types";
 
 const FPS = {FPS};
 
@@ -197,7 +242,7 @@ const SCENES = [
 {scenes_array}
 ];
 
-const DATA = {scene_data};
+const REPO_DATA: RepoData = {scene_data};
 
 function getSceneDur(id: string): number {{
   return SCENES.find(s => s.id === id)?.dur ?? 150;
@@ -212,7 +257,7 @@ export const TutorialVideo = () => {{
         
         <TransitionSeries>
           {{/* Scene audio tracks */}}
-          {{SCENES.map((s, i) => (
+          {{SCENES.map((s) => (
             <TransitionSeries.Sequence key={{s.id + "-audio"}} durationInFrames={{s.dur}}>
               <Audio src={{staticFile(s.audio)}} volume={{0.9}} />
             </TransitionSeries.Sequence>
@@ -272,8 +317,12 @@ def get_scene_component(scene_id: str) -> str:
 
 def render_video(
     output_name: str = "viral-output.mp4",
-    concurrency: int = 2,
+    concurrency: Optional[int] = None,
     composition_id: str = "ViralVideo",
+    render_profile: str = "balanced",
+    codec: Optional[str] = None,
+    preset: Optional[str] = None,
+    crf: Optional[int] = None,
 ) -> str:
     """Render the video using Remotion CLI.
     
@@ -281,12 +330,44 @@ def render_video(
         output_name: Output filename
         concurrency: Number of parallel renders
         composition_id: Remotion composition ID to render
+        render_profile: Render speed/quality preset (draft, balanced, quality)
+        codec: Optional codec override (e.g. h264, h265)
+        preset: Optional encoder preset override (x264 preset for h264)
+        crf: Optional CRF override
     
     Returns:
         Path to rendered video
     """
     
     output_path = str(VIDEO_DIR / "out" / output_name)
+
+    # Resolve render profile + knobs with backward-compatible defaults.
+    resolved_profile, resolved_codec, resolved_crf, resolved_preset = _resolve_render_profile(
+        render_profile=render_profile,
+        codec=codec,
+        preset=preset,
+        crf=crf,
+    )
+
+    # Resolve concurrency dynamically when not provided.
+    # Default heuristic: CPU cores - 1, clamped to [1, 8] for stability.
+    # Optional env overrides:
+    # - REMOTION_CONCURRENCY
+    # - REMOTION_CONCURRENCY_MAX
+    cpu_count = os.cpu_count() or 4
+    default_auto_concurrency = max(1, min(cpu_count - 1, 8))
+    env_concurrency = _parse_positive_int_env("REMOTION_CONCURRENCY")
+    env_concurrency_max = _parse_positive_int_env("REMOTION_CONCURRENCY_MAX")
+
+    if env_concurrency is not None:
+        resolved_concurrency = env_concurrency
+    elif concurrency is None or concurrency <= 0:
+        resolved_concurrency = default_auto_concurrency
+    else:
+        resolved_concurrency = max(1, concurrency)
+
+    if env_concurrency_max is not None:
+        resolved_concurrency = min(resolved_concurrency, env_concurrency_max)
     
     # Use local remotion from node_modules on Windows
     import platform
@@ -301,19 +382,57 @@ def render_video(
     else:
         render_cmd = "npx"
     
-    print(f"  [VIDEO] Rendering video...")
+    print(
+        "  [VIDEO] Rendering video... "
+        f"(profile: {resolved_profile}, codec: {resolved_codec}, crf: {resolved_crf}, "
+        f"preset: {resolved_preset}, CPU cores: {cpu_count}, concurrency: {resolved_concurrency})"
+    )
     
     # Build the command - if using npx, need 'remotion render', if using remotion.cmd, just 'render'
     if "npx" in render_cmd:
-        cmd = [render_cmd, "remotion", "render", composition_id, output_path, f"--concurrency={concurrency}"]
+        cmd_base = [render_cmd, "remotion", "render", composition_id, output_path]
     else:
-        cmd = [render_cmd, "render", composition_id, output_path, f"--concurrency={concurrency}"]
-    
-    subprocess.run(
-        cmd,
-        cwd=str(VIDEO_DIR),
-        check=True,
-    )
+        cmd_base = [render_cmd, "render", composition_id, output_path]
+
+    def _build_render_cmd(conc: int) -> list[str]:
+        cmd = [
+            *cmd_base,
+            f"--concurrency={conc}",
+            f"--codec={resolved_codec}",
+            f"--crf={resolved_crf}",
+        ]
+        if resolved_codec == "h264" and resolved_preset:
+            cmd.append(f"--x264-preset={resolved_preset}")
+        return cmd
+
+    current_concurrency = resolved_concurrency
+    max_attempts = 3
+    last_error: Optional[subprocess.CalledProcessError] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            subprocess.run(
+                _build_render_cmd(current_concurrency),
+                cwd=str(VIDEO_DIR),
+                check=True,
+            )
+            last_error = None
+            break
+        except subprocess.CalledProcessError as err:
+            last_error = err
+            if current_concurrency <= 1 or attempt == max_attempts:
+                raise
+            reduced = max(1, current_concurrency // 2)
+            if reduced == current_concurrency:
+                reduced = current_concurrency - 1
+            print(
+                f"  [WARN] Render attempt {attempt} failed with concurrency={current_concurrency}. "
+                f"Retrying with concurrency={reduced}..."
+            )
+            current_concurrency = max(1, reduced)
+
+    if last_error is not None:
+        raise last_error
     
     # Cleanup chrome processes - cross-platform
     import platform

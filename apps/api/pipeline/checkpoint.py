@@ -137,6 +137,11 @@ class PipelineCheckpoint:
     music: str = "tech"
     voice: str = "Puck"
     music_volume: float = 0.22
+    style: str = "auto"
+    render_profile: str = "balanced"
+    codec: Optional[str] = None
+    preset: Optional[str] = None
+    crf: Optional[int] = None
     
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -161,9 +166,14 @@ class CheckpointManager:
         job_id: str,
         source: str,
         content_type: str = "youtube_reel",
+        style: str = "auto",
         music: str = "tech",
         voice: str = "Puck",
         music_volume: float = 0.22,
+        render_profile: str = "balanced",
+        codec: Optional[str] = None,
+        preset: Optional[str] = None,
+        crf: Optional[int] = None,
     ) -> PipelineCheckpoint:
         """Create a new checkpoint."""
         source_type = SourceType.from_string(source).value
@@ -181,6 +191,11 @@ class CheckpointManager:
             music=music,
             voice=voice,
             music_volume=music_volume,
+            style=style,
+            render_profile=render_profile,
+            codec=codec,
+            preset=preset,
+            crf=crf,
         )
         
         self._save_checkpoint(checkpoint)

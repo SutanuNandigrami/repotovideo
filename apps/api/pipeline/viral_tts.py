@@ -11,8 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types
+from google import genai  # type: ignore[reportMissingImports]
+from google.genai import types  # type: ignore[reportMissingImports]
 
 from .api_client import create_api_client, APIProvider
 

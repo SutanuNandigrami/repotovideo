@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 
 # PDF support
 try:
-    import PyPDF2
+    import PyPDF2  # type: ignore[reportMissingImports]
     HAS_PDF_SUPPORT = True
 except ImportError:
     HAS_PDF_SUPPORT = False

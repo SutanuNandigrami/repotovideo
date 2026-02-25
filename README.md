@@ -1,28 +1,21 @@
 # RepoToViralVideo
 
-> Turn any GitHub repository or local file into a viral promo video in just one-click.
-
-**RepoToViralVideo** analyzes any GitHub repository or local file and generates a short, high-energy promo video designed to go viral on X/LinkedIn with AI voiceover, kinetic typography, animated stats, and background music.
+Turn any GitHub repository or local file into a short promo video with AI analysis, AI voiceover, animated scenes, and optional final render.
 
 <p align="left">
   <img src="app_demo.png" width="100%" alt="RepoToViralVideo">
 </p>
 
-> Powered by **Gemini 2.5 Flash** for analysis and TTS
-
 ---
 
 ## Features
 
-- **Multiple Input Sources:** GitHub URLs, local files (.md, .txt, .pdf)
-- **AI Voiceover:** Gemini TTS generates natural, conversational narration
-- **Kinetic Typography:** Words slam in from all directions with spring physics
-- **Animated Counters:** Star counts and fork counts animate from 0 to their final number
-- **Background Music:** 4 bundled royalty-free tracks (chill, upbeat, tech, hype)
-- **Fast Cuts:** Slide transitions between scenes, nothing stays static
-- **Smart Analysis:** Gemini reads the repo/file and extracts impressive stats and features
-- **Adaptive Scenes:** Automatically selects different video styles based on content (4-6 scenes)
-- **Checkpoint & Resume:** Failed runs can be resumed from where they left off
+- GitHub URL + local file input (`.md`, `.txt`, `.pdf`)
+- 4-step checkpointed pipeline (analyze → TTS → composition → render)
+- Provider switch via `--api gemini|vertex`
+- Style presets via `--style`
+- Render tuning via `--render-profile`, `--codec`, `--preset`, `--crf`, `--concurrency`
+- Resume support via `--resume` and clean rerun via `--clean`
 
 ---
 
@@ -30,187 +23,183 @@
 
 ### Prerequisites
 
-- **Python 3.10+**
-- **Node.js 18+**
-- **FFmpeg:** Required for audio processing
-- **Gemini API key:** Get from [Google AI Studio](https://aistudio.google.com)
+- Python 3.10+
+- Node.js 18+
+- FFmpeg in PATH (or bundled under project directory on Windows)
 
 ### Setup
 
 ```bash
-# 1. Clone the repo
+# 1) Clone
 git clone https://github.com/Shubhamsaboo/repotovideo.git
 cd repotovideo
 
-# 2. Install dependencies
+# 2) Install dependencies
 npm run install:all
 
-# 3. Set your Gemini API key (choose one)
-export GEMINI_API_KEY="your-key-here"    # Linux/Mac
-set GEMINI_API_KEY=your-key-here          # Windows
+# 3) Create env file
+copy .env.example .env   # Windows (cmd)
+# cp .env.example .env   # Linux/macOS
+```
+
+---
+
+## Provider setup: Gemini vs Vertex AI
+
+The CLI always routes both **analysis** and **TTS** through the selected `--api` provider.
+
+### Option A: Gemini API (`--api gemini`)
+
+Required env:
+
+```env
+GEMINI_API_KEY=your-gemini-key
+```
+
+Example:
+
+```bash
+python generate.py https://github.com/langchain-ai/langchain --api gemini
+```
+
+### Option B: Vertex AI (`--api vertex`)
+
+Required env:
+
+```env
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+```
+
+Runtime auth requirement:
+
+- Configure **Application Default Credentials (ADC)** for Vertex requests (for example with `gcloud auth application-default login`), or provide a valid service-account JSON and point `GOOGLE_APPLICATION_CREDENTIALS` to it.
+
+Optional env:
+
+```env
+# may be present in your environment, but current google-genai vertex mode can still rely on ADC
+GOOGLE_API_KEY=your-google-api-key
+```
+
+Optional env:
+
+```env
+# preferred
+GOOGLE_CLOUD_LOCATION=us-central1
+
+# accepted fallback alias
+GOOGLE_CLOUD_REGION=us-central1
+```
+
+If no location is set, the pipeline defaults to `us-central1`.
+
+Example:
+
+```bash
+python generate.py https://github.com/langchain-ai/langchain --api vertex
 ```
 
 ---
 
 ## Usage
 
-### CLI Commands
+### Basic commands
 
 ```bash
-# Generate from GitHub repo
+# GitHub source
 python generate.py https://github.com/langchain-ai/langchain
 
-# Generate from local file
-python generate.py ./README.md
-python generate.py ./document.pdf
+# Local markdown/text/pdf
+python generate.py .\README.md
+python generate.py .\docs\brief.pdf
 
-# With custom options
-python generate.py https://github.com/user/repo --music hype --voice Puck
+# Fast verification path (skip final render)
+python generate.py .\README.md --skip-render
 ```
 
-### Command Options
+### CLI options
 
 | Option | Description | Default |
-|--------|-------------|---------|
+|---|---|---|
 | `source` | GitHub URL or local file path | Required |
-| `--content-type` | Video format: instagram_reel, youtube_reel, youtube_long | youtube_reel |
-| `--music` | Background music: chill, upbeat, tech, hype | tech |
-| `--voice` | TTS voice: Puck, Kore, Aoede, Charon, Fenrir | Puck |
-| `--api` | API provider: gemini, vertex | gemini |
-| `--music-volume` | Background music volume (0.0-1.0) | 0.22 |
-| `--output` | Output filename | viral-<source>.mp4 |
-| `--skip-render` | Generate composition only, skip rendering | false |
-| `--resume` | Resume from last checkpoint | false |
-| `--clean` | Start fresh, ignore checkpoints | false |
-| `--list-content-types` | List available content types | - |
-| `--list-apis` | List available API providers | - |
-
-### Voice Options
-
-| Voice | Style |
-|-------|-------|
-| **Puck** | Playful, energetic - great for hype videos |
-| **Kore** | Warm, confident |
-| **Aoede** | Smooth, warm |
-| **Charon** | Deep, authoritative |
-| **Fenrir** | Bold, strong |
-
-### Music Options
-
-| Music | Mood |
-|-------|------|
-| **tech** | Futuristic, modern (default) |
-| **hype** | Energetic, exciting |
-| **chill** | Relaxed, calm |
-| **upbeat** | Positive, motivating |
+| `--content-type` | `instagram_reel`, `youtube_reel`, `youtube_long` | `youtube_reel` |
+| `--music` | `chill`, `upbeat`, `tech`, `hype` | `tech` |
+| `--voice` | TTS voice (e.g. `Puck`, `Kore`, `Aoede`, `Charon`, `Fenrir`) | `Puck` |
+| `--api` | API provider: `gemini`, `vertex` | `gemini` |
+| `--music-volume` | Background music volume (0.0–1.0) | `0.22` |
+| `--output` | Output filename | `viral-<source>.mp4` |
+| `--style` | Narration/scene style (`auto`, `repo-promo`, `explainer`, `story`, `listicle`, `myth-vs-fact`, `case-study`, `launch-teaser`) | `auto` |
+| `--render-profile` | Render profile: `draft`, `balanced`, `quality` | `balanced` |
+| `--concurrency` | Render concurrency (`0` = auto) | `0` |
+| `--codec` | Codec override (example: `h264`, `h265`) | auto |
+| `--preset` | Encoder preset override | auto |
+| `--crf` | CRF override (lower = higher quality) | auto |
+| `--skip-render` | Generate composition only, skip render step | `false` |
+| `--resume` | Resume from checkpoint | `false` |
+| `--clean` | Ignore checkpoint and start fresh | `false` |
+| `--list-content-types` | List available content presets and exit | - |
+| `--list-apis` | List provider availability and exit | - |
 
 ---
 
-## Pipeline
+## Pipeline steps
 
-The video generation runs in **4 steps**:
+1. **Analyze** (`apps/api/pipeline/viral_analyzer.py`) - builds structured scene/script plan from source.
+2. **TTS** (`apps/api/pipeline/viral_tts.py`) - generates scene voiceovers.
+3. **Composition** - writes Remotion scene data/components.
+4. **Render** - outputs final MP4 (unless `--skip-render`).
 
-1. **AI Analysis** - Gemini analyzes the source (repo URL or file content) and extracts:
-   - Stars, forks, language, topics
-   - Key features and selling points
-   - Tech stack information
-   - Generates scene selection and voiceover scripts
+Checkpoint artifacts include:
 
-2. **TTS Voiceover** - Gemini TTS generates narration for each scene:
-   - 6 scenes: hook, what, features, tech, stats, cta
-   - Each scene gets custom tone hints for natural delivery
-
-3. **Composition** - Generates Remotion React components:
-   - Dynamic TutorialVideo.tsx with scene data
-   - Root.tsx with composition settings
-
-4. **Render** - Remotion renders the final video:
-   - 1080x1920 (9:16) for social media
-   - Spring animations, transitions, background music
+- `analysis.json`
+- `audio/scene_*.mp3`
+- `durations.json`
+- generated composition files
 
 ---
 
-## Checkpoint & Resume
+## Verification checklist
 
-The pipeline saves progress after each step. If something fails, you can resume:
+Use this sequence when validating setup on a fresh machine:
 
 ```bash
-# Resume from last checkpoint
-python generate.py https://github.com/user/repo --resume
+# 1) Verify provider detection
+python generate.py dummy --list-apis
 
-# Start completely fresh (ignore checkpoints)
-python generate.py https://github.com/user/repo --clean
+# 2) Verify option plumbing and content presets
+python generate.py dummy --list-content-types
+
+# 3) Verify full pipeline path without render (small local source)
+python generate.py .\README.md --api gemini --skip-render --clean
+python generate.py .\README.md --api vertex --skip-render --clean
 ```
 
-**What gets saved:**
-- Analysis data (analysis.json)
-- Voiceover audio (audio/scene_*.mp3)
-- Scene durations (durations.json)
-- Generated composition (TutorialVideo.tsx, Root.tsx)
+For Vertex, step 3 requires live network access + valid Vertex credentials.
 
 ---
 
-## Output
+## Troubleshooting
 
-Generated videos are saved to:
+- **`GEMINI_API_KEY is required when using --api gemini`**
+  - Set `GEMINI_API_KEY` in `.env` or shell.
 
-```
-apps/video/out/viral-<source>.mp4
-```
+- **`GOOGLE_API_KEY is required when using --api vertex`**
+  - If you use this warning path, set `GOOGLE_API_KEY`; however, Vertex calls can still require ADC in current runtime/auth mode.
 
-Example:
-```
-apps/video/out/viral-langchain.mp4
-```
+- **`GOOGLE_CLOUD_PROJECT is required when using --api vertex`**
+  - Set your GCP project ID in `GOOGLE_CLOUD_PROJECT`.
 
----
+- **`Your default credentials were not found`**
+  - Configure ADC (`gcloud auth application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS` to a valid service-account JSON file.
 
-## Project Structure
+- **Vertex location issues**
+  - Set `GOOGLE_CLOUD_LOCATION` (or `GOOGLE_CLOUD_REGION`) explicitly.
 
-```
-repotovideo/
-|
-|-- generate.py                  # CLI entry point
-|
-|-- apps/
-|   |-- api/                     # Python pipeline
-|   |   |-- server.py            # API server (optional)
-|   |   |-- requirements.txt
-|   |   |-- pipeline/
-|   |   |   |-- viral_analyzer.py    # AI analysis
-|   |   |   |-- viral_tts.py         # Voice generation
-|   |   |   |-- viral_renderer.py    # Composition generator
-|   |   |   |-- checkpoint.py        # Checkpoint system
-|   |   |   |-- source_validator.py  # URL/file validation
-|   |   |   |-- api_client.py        # API client
-|   |
-|   |-- video/                   # Remotion video project
-|       |-- src/
-|       |   |-- TutorialVideo.tsx    # Main composition
-|       |   |-- Root.tsx             # Remotion root
-|       |   |-- types.ts
-|       |   |-- scenes/              # Scene components
-|       |       |-- HookScene.tsx
-|       |       |-- WhatScene.tsx
-|       |       |-- FeaturesScene.tsx
-|       |       |-- TechScene.tsx
-|       |       |-- StatsScene.tsx
-|       |       |-- CTAScene.tsx
-|       |-- public/
-|           |-- music/               # Background tracks
-|           |-- audio/               # TTS audio (generated)
-|
-|-- ffmpeg-8.0.1-essentials_build/  # Bundled FFmpeg (Windows)
-```
+- **FFmpeg not found**
+  - Install FFmpeg and ensure it is in PATH (or place local Windows bundle in project).
 
----
-
-## Tech Stack
-
-- **AI:** Gemini 2.5 Flash (analysis + TTS)
-- **Video:** [Remotion](https://remotion.dev) (React -> MP4)
-- **Backend:** Python 3.10+
-- **Audio:** FFmpeg
+- **Node modules missing**
+  - Run `npm run install:all`.
 
 ---
 

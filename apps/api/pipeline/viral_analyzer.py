@@ -18,11 +18,12 @@ import os
 import asyncio
 import sys
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
-from google import genai
-from google.genai import types
+from google import genai  # type: ignore[reportMissingImports]
+from google.genai import types  # type: ignore[reportMissingImports]
 
 # Import our new modules
 from .checkpoint import ContentType, PipelineStep
@@ -36,6 +37,18 @@ from .api_client import APIClient, create_api_client, APIProvider
 
 
 MAX_RETRIES = 3
+STYLE_CHOICES = (
+    "auto",
+    "repo-promo",
+    "explainer",
+    "story",
+    "listicle",
+    "myth-vs-fact",
+    "case-study",
+    "launch-teaser",
+)
+VIDEO_STYLES = tuple(s for s in STYLE_CHOICES if s != "auto")
+HOOK_STYLES = ("counter", "momentum", "problem")
 
 
 def _parse_stars(value) -> int:
@@ -181,6 +194,9 @@ class RepoAnalysis:
     scenes: list[str]
     voiceover_scripts: dict[str, str]
     music_mood: str
+    requested_style: str = "auto"
+    style: str = "repo-promo"
+    style_reason: str = "default"
     # Additional fields for content type
     content_type: str = "youtube_reel"
     source_content: Optional[str] = None
@@ -260,7 +276,59 @@ RESPONSE_SCHEMA = types.Schema(
 )
 
 
-def get_system_prompt(content_type: str = "youtube_reel") -> str:
+def _normalize_hook_style(value: Optional[str]) -> str:
+    """Normalize hook style into supported scene variants."""
+    if value in HOOK_STYLES:
+        return value
+    return "problem"
+
+
+def _normalize_style(style: Optional[str]) -> str:
+    """Normalize style choice to a supported value."""
+    if style in VIDEO_STYLES:
+        return style
+    return "repo-promo"
+
+
+def _resolve_style(
+    requested_style: str,
+    source_type: str,
+    source: str,
+    content_text: str,
+) -> tuple[str, str]:
+    """Resolve style (including auto mode) using simple source/content heuristics."""
+    normalized_requested = requested_style if requested_style in STYLE_CHOICES else "auto"
+    if normalized_requested != "auto":
+        return _normalize_style(normalized_requested), "explicit"
+
+    text = (content_text or "").lower()
+    source_hint = source.lower()
+
+    if "myth" in text and "fact" in text:
+        return "myth-vs-fact", "auto: myth/fact markers detected"
+
+    numbered_points = len(re.findall(r"(?m)^\s*(?:\d+[.)]|[-*])\s+", content_text or ""))
+    if numbered_points >= 6:
+        return "listicle", "auto: list-like structure detected"
+
+    if any(k in text for k in ("case study", "customer", "roi", "before", "after", "outcome")):
+        return "case-study", "auto: case-study language detected"
+
+    if any(k in text for k in ("launch", "announcing", "release", "just shipped", "new feature")):
+        return "launch-teaser", "auto: launch/release language detected"
+
+    if any(k in text for k in ("story", "journey", "started", "origin", "once")):
+        return "story", "auto: narrative language detected"
+
+    if source_type == "github_url":
+        if any(k in source_hint for k in ("template", "starter", "boilerplate")):
+            return "explainer", "auto: repository appears educational/template-oriented"
+        return "repo-promo", "auto: default GitHub repository style"
+
+    return "explainer", "auto: default local content style"
+
+
+def get_system_prompt(content_type: str = "youtube_reel", style: str = "repo-promo") -> str:
     """Get the system prompt based on content type."""
     
     content_spec = ContentType.from_string(content_type).get_specs()
@@ -279,7 +347,55 @@ def get_system_prompt(content_type: str = "youtube_reel") -> str:
         duration_hint = f"This is longer content - {duration_target//60} minutes. Be more detailed."
         scene_hint = "Include all scenes: hook, what, features, tech, stats, cta. Go deeper on features."
     
+    resolved_style = _normalize_style(style)
+    style_directions = {
+        "repo-promo": (
+            "High-energy product promo",
+            "Focus on traction, core value prop, and why developers should care now.",
+            "Prefer hook/what/features/tech/stats/cta when data supports it.",
+        ),
+        "explainer": (
+            "Clear educational explainer",
+            "Prioritize clarity and practical outcomes over hype.",
+            "Prefer hook/what/features/tech/cta.",
+        ),
+        "story": (
+            "Narrative arc",
+            "Build a short story: problem -> turning point -> payoff.",
+            "Prefer hook/what/features/cta; use stats only if they support story payoff.",
+        ),
+        "listicle": (
+            "List-style format",
+            "Structure narration as numbered/highlight points.",
+            "Prefer hook/features/tech/cta.",
+        ),
+        "myth-vs-fact": (
+            "Debunking format",
+            "Frame claims as misconceptions corrected by concrete facts.",
+            "Prefer hook/what/features/stats/cta.",
+        ),
+        "case-study": (
+            "Outcome-driven case study",
+            "Emphasize measurable before/after impact and adoption proof.",
+            "Prefer hook/what/features/stats/cta.",
+        ),
+        "launch-teaser": (
+            "Launch teaser",
+            "Use urgency, novelty, and immediate next action.",
+            "Prefer hook/what/features/cta.",
+        ),
+    }
+    style_name, style_voice, style_scene_preference = style_directions.get(
+        resolved_style,
+        style_directions["repo-promo"],
+    )
+
     return f"""You are a viral video producer analyzing content for a promo video. Your job is to extract the most impressive, shareable aspects and write punchy voiceover scripts.
+
+STYLE MODE:
+- Style: {resolved_style} ({style_name})
+- Narration direction: {style_voice}
+- Scene direction: {style_scene_preference}
 
 RULES:
 - Write like Fireship — punchy, opinionated, no filler
@@ -299,6 +415,7 @@ RULES:
 async def analyze_source_for_viral(
     source: str,
     content_type: str = "youtube_reel",
+    style: str = "auto",
     api_provider: str = "gemini",
     validate_before: bool = True,
 ) -> RepoAnalysis:
@@ -313,6 +430,7 @@ async def analyze_source_for_viral(
         source: GitHub URL or path to local file (.md, .txt, .pdf)
         content_type: Content type preset (instagram_reel, youtube_reel, youtube_long)
         api_provider: API provider ("gemini" or "vertex")
+        style: Style preset for narration/scenes (or "auto")
         validate_before: Whether to validate source before API calls (default: True)
     
     Returns:
@@ -323,6 +441,8 @@ async def analyze_source_for_viral(
         ValueError: If analysis fails after retries
     """
     
+    content: Optional[str] = None
+
     # Step 1: Validate source BEFORE any API calls
     if validate_before:
         print(f"[SEARCH] Validating source: {get_source_display_name(source)}...")
@@ -339,36 +459,65 @@ async def analyze_source_for_viral(
         # For local files, content is extracted directly
         source_type = detect_source_type(source)
         if source_type == "local_file":
-            print(f"   [OK] Source validated. Content extracted ({len(content)} chars)")
+            content_text = content or ""
+            print(f"   [OK] Source validated. Content extracted ({len(content_text)} chars)")
         else:
             print(f"   [OK] Source validated (GitHub URL)")
     else:
-        content = None
         source_type = detect_source_type(source)
+
+    content_text = content or ""
     
-    # Step 2: Create API client
+    # Step 2: Resolve style and create API client
+    requested_style = style if style in STYLE_CHOICES else "auto"
+    resolved_style, style_reason = _resolve_style(
+        requested_style,
+        source_type,
+        source,
+        content_text,
+    )
+    print(f"   [STYLE] {resolved_style} ({style_reason})")
+
+    # Step 3: Create API client
     client = create_api_client(provider=api_provider)
     
-    # Step 3: Build the prompt based on source type
+    # Step 4: Build the prompt based on source type
     if source_type == "github_url":
         prompt = f"Analyze this GitHub repo for a viral promo video: {source}"
         tools = [types.Tool(url_context=types.UrlContext())]
     else:
         # For local files, provide the content directly
-        prompt = f"""Analyze this content for a viral promo video:
+        # If content is too minimal, use file name as project name
+        file_name = Path(source).stem
+        if len(content_text.strip()) < 50:
+            # Content too short - use file name and create minimal analysis
+            prompt = f"""Analyze this file for a viral promo video.
 
-{content}
+File name: {file_name}
+Content: {content_text}
+
+Since the content is minimal, create a compelling video script based on the file name "{file_name}". Treat it as a real project/product.
+
+Provide a JSON response with the following structure based on the content."""
+        else:
+            prompt = f"""Analyze this content for a viral promo video:
+
+{content_text}
 
 Provide a JSON response with the following structure based on the content."""
         tools = []
     
-    # Step 4: Run the analysis with retries
+    # Step 5: Run the analysis with retries
     return await _analyze_with_retry(
         client=client,
         prompt=prompt,
         content_type=content_type,
         tools=tools,
         source=source,
+        requested_style=requested_style,
+        resolved_style=resolved_style,
+        style_reason=style_reason,
+        source_content=content_text if source_type == "local_file" else None,
     )
 
 
@@ -378,6 +527,10 @@ async def _analyze_with_retry(
     content_type: str,
     tools: list,
     source: str,
+    requested_style: str,
+    resolved_style: str,
+    style_reason: str,
+    source_content: Optional[str] = None,
 ) -> RepoAnalysis:
     """Run analysis with retry logic."""
     
@@ -392,7 +545,7 @@ async def _analyze_with_retry(
                 model="gemini-3.1-pro-preview",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=get_system_prompt(content_type),
+                    system_instruction=get_system_prompt(content_type, style=resolved_style),
                     tools=tools if tools else None,
                     response_mime_type="application/json",
                     response_schema=RESPONSE_SCHEMA,
@@ -405,7 +558,14 @@ async def _analyze_with_retry(
             data = _robust_parse_json(raw)
             
             # Successfully parsed — build the result
-            return _build_analysis(data, content_type)
+            return _build_analysis(
+                data,
+                content_type,
+                source_content,
+                requested_style=requested_style,
+                resolved_style=resolved_style,
+                style_reason=style_reason,
+            )
 
         except Exception as e:
             last_error = e
@@ -421,7 +581,14 @@ async def _analyze_with_retry(
     )
 
 
-def _build_analysis(data: dict, content_type: str = "youtube_reel") -> RepoAnalysis:
+def _build_analysis(
+    data: dict,
+    content_type: str = "youtube_reel",
+    source_content: Optional[str] = None,
+    requested_style: str = "auto",
+    resolved_style: str = "repo-promo",
+    style_reason: str = "default",
+) -> RepoAnalysis:
     """Build a RepoAnalysis from parsed JSON data. Model decides structure."""
     stars = _parse_stars(data.get("stars", 0))
     forks = _parse_stars(data.get("forks", 0))
@@ -470,13 +637,17 @@ def _build_analysis(data: dict, content_type: str = "youtube_reel") -> RepoAnaly
         frameworks=data.get("frameworks") or [],
         features=features,
         tech_stack=tech_stack,
-        hook_style=data.get("hook_style") or "problem",
+        hook_style=_normalize_hook_style(data.get("hook_style")),
         hook_text=data.get("hook_text", ""),
         tagline=data.get("tagline", ""),
         scenes=scenes,
         voiceover_scripts=voiceover,
         music_mood=data.get("music_mood") or "tech",
+        requested_style=requested_style,
+        style=_normalize_style(resolved_style),
+        style_reason=style_reason,
         content_type=content_type,
+        source_content=source_content,
     )
 
 
@@ -493,11 +664,12 @@ if __name__ == "__main__":
     from dataclasses import asdict
 
     if len(sys.argv) < 2:
-        print("Usage: python viral_analyzer.py <github-url|local-file> [--content-type type] [--api gemini|vertex]")
+        print("Usage: python viral_analyzer.py <github-url|local-file> [--content-type type] [--style style] [--api gemini|vertex]")
         sys.exit(1)
 
     source = sys.argv[1]
     content_type = "youtube_reel"
+    style = "auto"
     api_provider = "gemini"
     
     # Parse optional args
@@ -505,6 +677,9 @@ if __name__ == "__main__":
     while i < len(sys.argv):
         if sys.argv[i] == "--content-type" and i + 1 < len(sys.argv):
             content_type = sys.argv[i + 1]
+            i += 2
+        elif sys.argv[i] == "--style" and i + 1 < len(sys.argv):
+            style = sys.argv[i + 1]
             i += 2
         elif sys.argv[i] == "--api" and i + 1 < len(sys.argv):
             api_provider = sys.argv[i + 1]
@@ -516,6 +691,7 @@ if __name__ == "__main__":
         analysis = await analyze_source_for_viral(
             source,
             content_type=content_type,
+            style=style,
             api_provider=api_provider,
         )
         print(json.dumps(asdict(analysis), indent=2))
