@@ -20,6 +20,10 @@ apps/video/public/audio_viral/
 # Environment
 .env
 .env.local
+.env.production
+
+# Output directory for generated videos
+output/
 
 # OS
 .DS_Store
